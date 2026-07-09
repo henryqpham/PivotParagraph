@@ -1,8 +1,6 @@
 "use client";
 
 import { memo, useMemo, useState } from "react";
-import { buildWordHtml, htmlToPlainText, isHeadingStyleSet } from "@/lib/clipboard";
-import type { HeadingStyle } from "@/lib/clipboard";
 import { defaultMarker, type MarkerKind } from "@/lib/renderers";
 import { DEFAULT_FIELD_LABEL, type FieldLabel } from "@/lib/types";
 import {
@@ -13,12 +11,9 @@ import {
   moveField,
   outdentField,
   removeField,
-  tableToHtml,
   unusedColumns,
   type TableState,
 } from "./tableModel";
-import { JsonPreview } from "./JsonPreview";
-import { RenderedPreview } from "./RenderedPreview";
 
 /** Marker styles offered per indent level, with a sample label. */
 const MARKER_OPTIONS: { kind: MarkerKind; label: string }[] = [
@@ -35,18 +30,14 @@ const MARKER_OPTIONS: { kind: MarkerKind; label: string }[] = [
 
 type Props = {
   table: TableState;
-  headingStyle: HeadingStyle;
-  bodyFont: string;
   onChange: (patch: Partial<TableState>) => void;
 };
 
-function TableCardInner({ table, headingStyle, bodyFont, onChange }: Props) {
-  const [view, setView] = useState<"rendered" | "json">("rendered");
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+function TableCardInner({ table, onChange }: Props) {
   // Start-number field held as a string so it can be cleared/retyped (the card is
   // keyed by table id, so this resets per table); committed to numbering.start only
-  // when it parses to a valid >= 1 integer, and re-synced to the committed value on
-  // blur if left empty/invalid.
+  // when it parses to a valid dotted decimal, and re-synced to the committed value
+  // on blur if left empty/invalid.
   const [startInput, setStartInput] = useState(String(table.numbering.start));
 
   const { grid, pivotLevels } = table;
@@ -77,17 +68,6 @@ function TableCardInner({ table, headingStyle, bodyFont, onChange }: Props) {
     return out;
   }, [pivotLevels]);
 
-  // The whole derive-from-state chain for this one table; recomputed only when
-  // this table's record changes (it carries all the per-table config).
-  // Whether the title is a real Word heading (a shared Heading style is set); it
-  // sets the body heading-row level (title Heading 1 → body Heading 2), so the
-  // preview uses the same value the export does.
-  const titleIsHeading = isHeadingStyleSet(headingStyle.headingStyleName);
-  const html = useMemo(
-    () => tableToHtml(table, titleIsHeading),
-    [table, titleIsHeading],
-  );
-
   // Toggle part of one field's label look (keyed by grid column).
   function patchLabel(col: number, patch: Partial<FieldLabel>) {
     const cur = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
@@ -107,33 +87,9 @@ function TableCardInner({ table, headingStyle, bodyFont, onChange }: Props) {
     onChange({ sortDirs: next });
   }
 
-  // Write this table's pivot to the clipboard as text/html (+ text/plain
-  // fallback). Built synchronously from `html` before any await, preserving the
-  // user-gesture requirement.
-  async function copyForWord() {
-    if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
-      setCopyState("error");
-      setTimeout(() => setCopyState("idle"), 2000);
-      return;
-    }
-    try {
-      const item = new ClipboardItem({
-        "text/html": new Blob([buildWordHtml(html, headingStyle, bodyFont)], {
-          type: "text/html",
-        }),
-        "text/plain": new Blob([htmlToPlainText(html)], { type: "text/plain" }),
-      });
-      await navigator.clipboard.write([item]);
-      setCopyState("copied");
-    } catch {
-      setCopyState("error");
-    }
-    setTimeout(() => setCopyState("idle"), 2000);
-  }
-
   const btn =
     "px-1 text-foreground/40 transition-colors hover:text-foreground disabled:opacity-20 disabled:hover:text-foreground/40";
-  // Per-field label toggle (Aa / B / U): highlighted when active.
+  // Per-field label toggle (Aa / B / I / U): highlighted when active.
   const tgl = (active: boolean) =>
     `flex h-5 w-5 items-center justify-center rounded border text-[10px] transition-colors disabled:opacity-25 ${
       active
@@ -205,26 +161,6 @@ function TableCardInner({ table, headingStyle, bodyFont, onChange }: Props) {
             />
           </label>
         )}
-        <button
-          type="button"
-          onClick={() => setView((v) => (v === "rendered" ? "json" : "rendered"))}
-          className="rounded-md border border-foreground/20 px-3 py-1 text-xs font-medium transition-colors hover:bg-foreground/5"
-        >
-          {view === "rendered" ? "View JSON" : "View rendered"}
-        </button>
-        <button
-          type="button"
-          onClick={copyForWord}
-          disabled={html === ""}
-          title="Copies this table's HTML to paste into Word. For the title to match your document's Heading 1, paste with 'Use Destination Styles' (Word → Options → Advanced → Pasting from other programs)."
-          className="rounded-md border border-foreground/20 px-3 py-1 text-xs font-medium transition-colors hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {copyState === "copied"
-            ? "Copied!"
-            : copyState === "error"
-              ? "Copy failed"
-              : "Copy for Word"}
-        </button>
       </div>
 
       {headers.length > 0 && (
@@ -337,7 +273,7 @@ function TableCardInner({ table, headingStyle, bodyFont, onChange }: Props) {
                         </button>
                       </span>
                       {/* Sort: off ↕ → asc ↑ → desc ↓ → off, ordering the sibling
-                          groups at this field's indent level. */}
+                          groups at this field's level. */}
                       {(() => {
                         const dir = table.sortDirs[col];
                         const glyph =
@@ -476,8 +412,7 @@ function TableCardInner({ table, headingStyle, bodyFont, onChange }: Props) {
 
           {/* Number level: per-level show/hide of the multilevel number (only when
               numbering is on). Unchecking a level leaves its line plain while the
-              path still compounds by depth — e.g. number the structural levels and
-              leave Rationale/Notes unnumbered. */}
+              path still compounds by depth. */}
           {pivotLevels.length > 0 && table.numbering.mode === "multilevel" && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-foreground/70">
               <span className="text-foreground/60">
@@ -539,10 +474,7 @@ function TableCardInner({ table, headingStyle, bodyFont, onChange }: Props) {
           )}
 
           {/* Blank line after: pick which level's groups get a trailing blank line
-              (a separator → a gap before the next group at that level). Each option
-              is labelled by that level's field name, so it reads "after each MISSION
-              RULE TITLE". Stored as `breakAfter` (boolean[]) with one level set, or
-              [] for none. */}
+              (a separator → a gap before the next group at that level). */}
           {pivotLevels.length > 0 && (
             <label className="flex flex-wrap items-center gap-1.5 text-sm text-foreground/70">
               <span className="text-foreground/60">Blank line after each</span>
@@ -568,17 +500,6 @@ function TableCardInner({ table, headingStyle, bodyFont, onChange }: Props) {
             </label>
           )}
         </div>
-      )}
-
-      {view === "json" ? (
-        <JsonPreview grid={grid} />
-      ) : (
-        <RenderedPreview
-          html={html}
-          headingStyle={headingStyle}
-          bodyFont={bodyFont}
-          emptyHint="Add fields above to build the outline. Stack fields at one indent level to show them together (like an Excel pivot's Row Labels)."
-        />
       )}
     </div>
   );

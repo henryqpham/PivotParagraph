@@ -17,7 +17,7 @@ The app is **pivot-only**: paste → nest → render → Copy for Word. It began
 | **Word heading rows** | `headingLevels: boolean[]` (per level, labelled by field name) maps a level's rows to a destination `Heading K` style — nav pane + collapsible, flush-left; Word numbers them so the app number/marker is suppressed there (the path still computes, so deeper rows nest). Scoped to the top level or two, so the nav stays clean | Done |
 | **Renderer** | `renderPivotTree(nodes, title?, markers?, fieldLabels?, breakAfter?, numbering?, headingLevels?, titleIsHeading?)` → HTML fragment ([`lib/renderers.ts`](../lib/renderers.ts)) | Done |
 | **Clipboard output** | `text/html` (+ `text/plain`) for Word ([`lib/clipboard.ts`](../lib/clipboard.ts) `buildWordHtml`) | Done |
-| **Multiple tables + tab strip** | Paste appends a table; cards in a horizontal tab strip (cap 100) | Done |
+| **Multiple tables + Sections rail** | Paste appends a table; rows in a left Sections rail within a 4-pane IDE layout (cap 100) | Done |
 | **Shared per-level styling** | One "Heading levels" panel → `HeadingStyle = { levels: LevelStyle[] }`: Level 1 = title, Levels 2-9 = nested rows (color/font/size/bold each, default all the same; "Reset levels") + one Body font | Done |
 | **Combined export** | **Copy all** — every table as one Word doc | Done |
 | **Malformed-paste handling** | Graceful empty/parse-error states | Done |

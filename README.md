@@ -8,15 +8,15 @@ Wide Excel tables don't fit an 8.5" x 11" Word page — columns bleed off the ed
 
 ## Status
 
-**Working end to end:** paste → parse (SheetJS) → nest → render → live preview → **Copy for Word**. Paste several tables (managed in a tab strip), configure each table's pivot, style the levels once for all tables, and copy each table or all of them at once. See the [roadmap](./docs/ROADMAP.md) for what's out of scope (`.docx`).
+**Working end to end:** paste → parse (SheetJS) → nest → render → live preview → **Copy for Word**. Paste several tables (managed in a left Sections rail), configure each table's pivot, style the levels once for all tables, and copy each table or all of them at once. See the [roadmap](./docs/ROADMAP.md) for what's out of scope (`.docx`).
 
 ## The pivot view
 
-Add fields from the **Add fields** pool, then shape the **Structure**: each field sits at an indent level, and ◄/► move it shallower/deeper. Stack several fields at one level to show them together at the same indent; ▲/▼ reorder and ✕ removes. Rows nest by the levels and **merge** when their values match across a level's fields. Each line reads `Field name: value` — per field, toggle the `Field name:` label off (just the value), or **bold**/**italic**/**underline** it (`Aa`/`B`/`I`/`U`; underline covers just the name) to make a long list scannable, and **sort** the groups at that field (↕ off / ↑ ascending / ↓ descending; numeric *and* text aware, so `2` sorts before `10`). A per-level **Markers** picker prefixes `1.`/`a.`/`i.`/etc., and a **Blank line after each** dropdown (labelled by field name, e.g. after each title) adds a blank line between that level's groups. A per-table **Numbering** control draws static **multilevel numbers** from a chosen **Start** — the exact first number (e.g. `5.1` → `5.1`, `5.1.1`, `5.1.1.1`), so set it to `5.1` to nest a body under a `5.0` section title — as plain body text, not Word auto-numbering, so nothing becomes a Word heading and the preview shows the real numbers; when on, the number replaces that level's marker, and a per-level **Number level** checkbox hides a level's number. Hidden levels are *transparent*: the numbers follow the gap (e.g. number the type + text but hide the title → `5.1` then `5.1.1`, `5.1.2`, never a number under a missing parent). A per-level **Word heading** toggle maps a level's rows to a real Word heading (so they show in the Navigation pane and collapse, flush-left) — handy on just the top level so each section is in the document outline; Word numbers those rows. An optional **Section title** maps to your document's **Heading 1** ("5.0") on a *Use Destination Styles* paste. A **View JSON** toggle inspects the raw parsed grid.
+Add fields from the **Add fields** pool, then shape the **Structure**: each field sits at an indent level, and ◄/► move it shallower/deeper. Stack several fields at one level to show them together at the same indent; ▲/▼ reorder and ✕ removes. Rows nest by the levels and **merge** when their values match across a level's fields. Each line reads `Field name: value` — per field, toggle the `Field name:` label off (just the value), or **bold**/**italic**/**underline** it (`Aa`/`B`/`I`/`U`; underline covers just the name) to make a long list scannable, and **sort** the groups at that field (↕ off / ↑ ascending / ↓ descending; numeric *and* text aware, so `2` sorts before `10`). A per-level **Markers** picker prefixes `1.`/`a.`/`i.`/etc., and a **Blank line after each** dropdown (labelled by field name, e.g. after each title) adds a blank line between that level's groups. A per-table **Numbering** control draws static **multilevel numbers** from a chosen **Start** — the exact first number (e.g. `5.1` → `5.1`, `5.1.1`, `5.1.1.1`), so set it to `5.1` to nest a body under a `5.0` section title — as plain body text, not Word auto-numbering, so nothing becomes a Word heading and the preview shows the real numbers; when on, the number replaces that level's marker, and a per-level **Number level** checkbox hides a level's number. Hidden levels are *transparent*: the numbers follow the gap (e.g. number the type + text but hide the title → `5.1` then `5.1.1`, `5.1.2`, never a number under a missing parent). A per-level **Word heading** toggle maps a level's rows to a real Word heading (so they show in the Navigation pane and collapse, flush-left) — handy on just the top level so each section is in the document outline; Word numbers those rows. An optional **Section title** maps to your document's **Heading 1** ("5.0") on a *Use Destination Styles* paste. A **JSON** tab beside the live preview inspects the raw parsed grid.
 
 ## Multiple tables
 
-Paste table after table — each becomes a card in a horizontal **tab strip** (one edited at a time, cap 100). One shared **Heading levels** styling panel (Level 1 = the title, Levels 2-9 = the nested rows by depth) + a Body font apply to every table; each table keeps its own fields and title. Export per-table (**Copy for Word**) or everything at once (**Copy all**).
+Paste table after table — each becomes a row in the left **Sections rail** (one edited at a time, cap 100), inside a 4-pane IDE layout: top global controls · left rail · center builder · pinned right live preview. One shared **Heading levels** styling panel (Level 1 = the title, Levels 2-9 = the nested rows by depth) + a Body font apply to every table; each table keeps its own fields and title. Export per-table (**Copy for Word**) or everything at once (**Copy all**).
 
 ## Stack
 
@@ -53,10 +53,10 @@ Then open [http://localhost:3000](http://localhost:3000). Press **Ctrl/Cmd + C**
 ## Project layout
 
 ```
-app/                 App Router pages (home renders the paste view)
+app/                 App Router pages (home renders the full-height app shell)
 components/
-  PasteInput.tsx     parent: paste/append, tables[] + shared styles, tab strip, Copy all
-  TableCard.tsx      one table's pivot editor + preview + per-table Copy for Word
+  PasteInput.tsx     app shell (4-pane IDE): paste/append, tables[] + shared styles, left Sections rail, pinned preview (Preview/JSON tabs) + per-table Copy for Word, Copy all
+  TableCard.tsx      one table's center builder (structure + per-level controls)
   tableModel.ts      TableState + tableToHtml (per-table nest->render) + bucket helpers (add/remove/indent/outdent/move/unusedColumns)
   RenderedPreview.tsx renders the pivot HTML (live preview; ws-title + [data-level] CSS)
   JsonPreview.tsx    shows the raw parsed Grid as JSON

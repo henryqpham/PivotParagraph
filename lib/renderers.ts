@@ -237,8 +237,10 @@ function multilevelNumbers(
  * and no collisions (see `multilevelNumbers`).
  *
  * HEADING ROWS (`headingLevels[depth-1]`): a level the user mapped to a Word
- * heading. Its FIRST line is tagged `data-heading="K"` (K = `(titleIsHeading?1:0)
- * + depth`, clamped 9 -- a body heading nests one under a `Heading 1` title) so
+ * heading. Its FIRST line is tagged `data-heading="K"` (K = `titleLevel + depth`,
+ * clamped 9 -- a body heading nests one under the TITLE's heading level, so under a
+ * `Heading 1` title the top body heading is `Heading 2`, and under a `Heading 3`
+ * title it is `Heading 4`; `titleLevel` is 0 when the title is not a heading) so
  * `buildWordHtml` maps it to the destination `Heading K` style (nav pane +
  * collapsible). The app's number/marker is SUPPRESSED on those rows (Word supplies
  * the number), but the number PATH still computes so deeper body rows still nest
@@ -269,7 +271,7 @@ export function renderPivotTree(
   breakAfter: boolean[] = [],
   numbering: NumberingConfig = DEFAULT_NUMBERING,
   headingLevels: boolean[] = [],
-  titleIsHeading = false,
+  titleLevel = 0,
 ): string {
   const numbered = numbering.mode === "multilevel";
   // Precompute each numbered node's display number (transparent hidden levels, top
@@ -286,7 +288,7 @@ export function renderPivotTree(
     // number PATH still computes (via numberOf), so deeper body rows nest correctly.
     // headingK = the Word heading level (body nests one under a Heading-1 title).
     const isHeading = headingLevels[depth - 1] === true;
-    const headingK = Math.min((titleIsHeading ? 1 : 0) + depth, 9);
+    const headingK = Math.min(titleLevel + depth, 9);
     list.forEach((node, i) => {
       // Markers render only when numbering is off; a numbered node shows its
       // precomputed number instead (and a hidden-level node shows neither).

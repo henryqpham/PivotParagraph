@@ -244,10 +244,12 @@ function TableCardInner({
           </div>
           {headingStyleName !== "" && (
             <p className="text-xs text-muted">
-              Mapped to <strong>{headingStyleName}</strong> — the title takes your
-              document&rsquo;s heading (font/size/number) on a{" "}
-              <em>Use Destination Styles</em> paste; the Look controls apply only
-              when Heading is <strong>None</strong>.
+              Mapped to <strong>{headingStyleName}</strong> — this section joins the
+              Word outline (Navigation pane) and Word supplies its heading{" "}
+              <strong>number</strong>. Your <strong>Look</strong> above
+              (font/size/color/<strong>B</strong>/<em>I</em>/
+              <span className="underline">U</span>) still applies on top. Note: if
+              the destination heading is ALL-CAPS, Word keeps the uppercase.
             </p>
           )}
         </div>

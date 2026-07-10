@@ -175,10 +175,11 @@ export function moveField(levels: number[][], fi: number, dir: -1 | 1): number[]
  * The table's own config threads in: `sortDirs` reorders sibling groups in the
  * mapper post-pass, then `breakAfter` (per-level spacer), `numbering` (app-drawn
  * static multilevel numbers), and `headingLevels` (levels mapped to Word headings)
- * drive the renderer. `titleIsHeading` (whether a Heading style is set for the
- * title) sets the body heading level, so callers pass it from the shared style.
+ * drive the renderer. `titleLevel` (the Word heading LEVEL the title maps to, 0 =
+ * none) sets the body heading offset, so callers pass it from the shared style via
+ * `headingLevel(headingStyleName)`.
  */
-export function tableToHtml(t: TableState, titleIsHeading = false): string {
+export function tableToHtml(t: TableState, titleLevel = 0): string {
   const tree = rowsToPivotTree(t.grid, t.pivotLevels, t.sortDirs ?? {});
   if (tree.length === 0) return "";
   return renderPivotTree(
@@ -189,6 +190,6 @@ export function tableToHtml(t: TableState, titleIsHeading = false): string {
     t.breakAfter ?? [],
     t.numbering ?? DEFAULT_NUMBERING,
     t.headingLevels ?? [],
-    titleIsHeading,
+    titleLevel,
   );
 }

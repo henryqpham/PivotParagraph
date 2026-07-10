@@ -11,7 +11,7 @@ import { parseClipboard } from "@/lib/parser";
 import {
   buildWordHtml,
   htmlToPlainText,
-  isHeadingStyleSet,
+  headingLevel,
 } from "@/lib/clipboard";
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
 import { DEFAULT_NUMBERING } from "@/lib/renderers";
@@ -207,8 +207,8 @@ export function PasteInput() {
       setTimeout(() => setCopyAllState("idle"), 2000);
       return;
     }
-    const titleIsHeading = isHeadingStyleSet(headingStyleName);
-    const combined = tables.map((t) => tableToHtml(t, titleIsHeading)).join("\n");
+    const titleLevel = headingLevel(headingStyleName);
+    const combined = tables.map((t) => tableToHtml(t, titleLevel)).join("\n");
     try {
       const item = new ClipboardItem({
         "text/html": new Blob([buildWordHtml(combined, headingStyle, bodyFont)], {
@@ -229,10 +229,10 @@ export function PasteInput() {
   const atLimit = tables.length >= MAX_TABLES;
   const activeTable = tables.find((t) => t.id === activeId) ?? tables[0] ?? null;
 
-  const titleIsHeading = isHeadingStyleSet(headingStyleName);
+  const titleLevel = headingLevel(headingStyleName);
   const activeHtml = useMemo(
-    () => (activeTable ? tableToHtml(activeTable, titleIsHeading) : ""),
-    [activeTable, titleIsHeading],
+    () => (activeTable ? tableToHtml(activeTable, titleLevel) : ""),
+    [activeTable, titleLevel],
   );
 
   async function copyForWord() {

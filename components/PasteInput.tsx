@@ -327,32 +327,9 @@ export function PasteInput() {
     </p>
   );
 
-  // ---- Empty state -----------------------------------------------------------
-  if (tables.length === 0) {
-    return (
-      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 px-6 py-12">
-        <header className="flex items-center gap-3">
-          <span className="grid h-9 w-9 place-items-center rounded bg-accent text-lg font-bold text-accent-fg">
-            W
-          </span>
-          <div className="flex flex-col">
-            <h1 className="text-xl font-semibold tracking-tight">
-              Excel &rarr; Word Sections
-            </h1>
-            <p className="text-sm text-muted">
-              Paste an Excel/Sheets table to restructure it into a Word-ready
-              nested outline, then copy it for Word.
-            </p>
-          </div>
-        </header>
-        {pasteZone(true)}
-        {errorBanner}
-        {statusRegion}
-      </div>
-    );
-  }
-
-  // ---- Workspace: the Fluent 4-pane IDE --------------------------------------
+  // ---- The Fluent 4-pane IDE (shown ALWAYS — even with no tables yet, so the
+  //      full layout/outline is visible; the center shows a big paste zone plus
+  //      empty Section Header / Levels placeholder cards until you paste). -------
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       {/* TOP command band */}
@@ -378,12 +355,18 @@ export function PasteInput() {
           </button>
           <ScopeBadge>All tables</ScopeBadge>
           <div className="ml-auto flex items-center gap-2">
-            <button type="button" onClick={clearAll} className={BTN_SUBTLE}>
+            <button
+              type="button"
+              onClick={clearAll}
+              disabled={tables.length === 0}
+              className={BTN_SUBTLE}
+            >
               Clear all
             </button>
             <button
               type="button"
               onClick={copyAll}
+              disabled={tables.length === 0}
               title="Copies every table as one Word doc (stacked in paste order)."
               className={BTN_PRIMARY}
             >
@@ -561,14 +544,16 @@ export function PasteInput() {
             })}
           </div>
           <p className="mt-2 px-2 text-[11px] leading-snug text-muted">
-            Paste another table (in the center) to add a section.
+            {tables.length === 0
+              ? "No sections yet — paste a table in the center to add one."
+              : "Paste another table (in the center) to add a section."}
           </p>
         </aside>
 
-        {/* CENTER: the two command groups */}
+        {/* CENTER: the two command groups (or empty placeholders before a paste) */}
         <section className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-          {pasteZone(false)}
-          {activeTable && (
+          {pasteZone(tables.length === 0)}
+          {activeTable ? (
             <TableCard
               key={activeTable.id}
               table={activeTable}
@@ -578,6 +563,27 @@ export function PasteInput() {
               title={titleInput}
               onTitleChange={setTitle}
             />
+          ) : (
+            <>
+              <section className="rounded-lg border border-border bg-surface p-4 shadow-[var(--shadow-2)]">
+                <h2 className="mb-3 border-b border-border pb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                  Section Header
+                </h2>
+                <p className="text-sm text-muted">
+                  The section title, its Word heading, and its look
+                  (font/size/B/I/U/color) appear here once you paste a table.
+                </p>
+              </section>
+              <section className="rounded-lg border border-border bg-surface p-4 shadow-[var(--shadow-2)]">
+                <h2 className="mb-3 border-b border-border pb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                  Levels
+                </h2>
+                <p className="text-sm text-muted">
+                  Paste a table, then arrange its columns into the nested outline
+                  here — add fields, indent, number, and mark Word headings.
+                </p>
+              </section>
+            </>
           )}
         </section>
 

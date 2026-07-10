@@ -16,7 +16,7 @@ import {
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
 import { DEFAULT_NUMBERING } from "@/lib/renderers";
 import { tableToHtml, type TableState } from "./tableModel";
-import { TableCard } from "./TableCard";
+import { TableCard, type TitleInput } from "./TableCard";
 import { RenderedPreview } from "./RenderedPreview";
 import { JsonPreview } from "./JsonPreview";
 
@@ -33,73 +33,71 @@ const MAX_TABLES = 100;
 
 // One row of the per-level editor (size kept as a string so it can be cleared).
 type LevelInput = { color: string; font: string; sizeInput: string; bold: boolean };
-// Default look for an untouched level: plain Arial 11 black (matches a document
-// body, not a blue Word Heading). All levels start identical.
+// Default look for an untouched level: plain Arial 11 black (matches a document body).
 const DEFAULT_LEVEL: LevelInput = {
   color: "#000000",
   font: "Arial",
   sizeInput: "11",
   bold: false,
 };
+// Default TITLE look (its own shared style now — Arial 11 black, matching the old
+// level-1 default; only shows when the Heading dropdown is None).
+const DEFAULT_TITLE: TitleInput = {
+  font: "Arial",
+  sizeInput: "11",
+  color: "#000000",
+  bold: false,
+  italic: false,
+  underline: false,
+};
 
-/** A tiny uppercase pill that labels which scope a control panel affects. */
+// ---- Fluent control recipes -----------------------------------------------
+const BTN_PRIMARY =
+  "inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm font-semibold text-accent-fg bg-accent transition-colors hover:bg-accent-hover active:bg-accent-pressed disabled:cursor-not-allowed disabled:opacity-50";
+const BTN_SUBTLE =
+  "inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm font-semibold text-text-secondary bg-transparent transition-colors hover:bg-surface-alt hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
+const BTN_STD =
+  "inline-flex h-8 items-center gap-1.5 rounded border border-border-strong bg-surface px-3 text-sm font-semibold text-foreground transition-colors hover:bg-surface-alt disabled:cursor-not-allowed disabled:opacity-50";
+const FIELD =
+  "h-8 rounded border border-border-strong bg-surface px-2.5 text-sm text-foreground outline-none transition-colors focus:border-accent";
+const BADGE_CLS =
+  "rounded-sm bg-[color:color-mix(in_srgb,var(--muted)_14%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted";
+
+/** Fluent scope badge. */
 function ScopeBadge({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded border border-foreground/15 bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-      {children}
-    </span>
-  );
+  return <span className={BADGE_CLS}>{children}</span>;
 }
 
 export function PasteInput() {
-  // Each paste appends one table; tables stack down the page in paste order.
   const [tables, setTables] = useState<TableState[]>([]);
   const [error, setError] = useState<string | null>(null);
-  // Polite screen-reader announcement of the last paste result (a visible error
-  // is announced via role="alert"; a success has no visible banner, so it is
-  // mirrored here for non-sighted users).
   const [status, setStatus] = useState<string>("");
-  // Which table's tab is open; only the active table is rendered (no scrolling
-  // through the rest). New pastes become active; removing the active tab falls
-  // to a neighbor.
   const [activeId, setActiveId] = useState<string | null>(null);
   const [copyAllState, setCopyAllState] = useState<"idle" | "copied" | "error">(
     "idle",
   );
-  // Per-table "Copy for Word" state (the button lives in the preview pane header).
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
-    "idle",
-  );
-  // Right-pane preview tab: the rendered outline or the raw parsed JSON.
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [view, setView] = useState<"rendered" | "json">("rendered");
-  // Whether the global "Level styles" panel (top band) is expanded.
   const [showStyles, setShowStyles] = useState(false);
-  // Monotonic id source: never reused, so React keys stay stable when a middle
-  // table is removed (a ref, so bumping it never triggers a render).
   const idRef = useRef(0);
 
-  // Body font (default Arial) so unstyled body text doesn't fall back to Times
-  // New Roman on a Word paste. Separate from the per-level row look.
+  // Document body font (default Arial).
   const [bodyFont, setBodyFont] = useState<string>("Arial");
-  // The single heading-style source, shared across every table: per-level look
-  // (Level 1 = the pivot title, Levels 2-9 = the nested rows by depth). SPARSE --
-  // an index is written only when that level is edited; untouched levels use
-  // DEFAULT_LEVEL (so they all start identical; "Reset levels" clears this back
-  // to []). Sticky, even across "Clear all".
+  // Per-level BODY styling, shared across tables (the "level chart"). Sparse.
   const [levelStyles, setLevelStyles] = useState<LevelInput[]>([]);
-  // Left-indent added per nesting level (inches). Held as a string so it can be
-  // cleared/backspaced; clamped to [0, 2] for output.
+  // Left-indent per nesting level (inches), clamped [0, 2].
   const [indentInput, setIndentInput] = useState<string>("0.2");
-  // Optional Word style names: when set, the title / body paragraphs carry
-  // `mso-style-name` so a "Use Destination Styles" paste adopts the destination
-  // document's styles. Blank → the app's direct per-level look.
+  // Global Word heading style the TITLE maps to ("" = None). Driven by the
+  // Section Header dropdown in TableCard.
   const [headingStyleName, setHeadingStyleName] = useState<string>("Heading 1");
+  // Shared TITLE look (its own controls in the Section Header group).
+  const [titleInput, setTitleInput] = useState<TitleInput>(DEFAULT_TITLE);
+
   const headingStyle = useMemo<HeadingStyle>(() => {
     const clampPt = (s: string, fallback: number) => {
       const n = parseInt(s, 10);
       return Number.isFinite(n) && n >= 1 && n <= 72 ? n : fallback;
     };
-    // Full 9-entry per-level look: an edited level wins; otherwise DEFAULT_LEVEL.
     const levels: LevelStyle[] = Array.from({ length: 9 }, (_, i) => {
       const ls = levelStyles[i];
       return {
@@ -116,17 +114,30 @@ export function PasteInput() {
     const indentStep = Number.isFinite(parsedIndent)
       ? Math.min(2, Math.max(0, parsedIndent))
       : 0.2;
-    return { levels, indentStep, headingStyleName };
-  }, [levelStyles, indentInput, headingStyleName]);
+    return {
+      levels,
+      indentStep,
+      headingStyleName,
+      titleStyle: {
+        font: titleInput.font,
+        size: clampPt(titleInput.sizeInput, 11),
+        color: titleInput.color,
+        bold: titleInput.bold,
+        italic: titleInput.italic,
+        underline: titleInput.underline,
+      },
+    };
+  }, [levelStyles, indentInput, headingStyleName, titleInput]);
 
-  // Edit one level: snapshot DEFAULT_LEVEL into that index if it's not set yet,
-  // then apply the patch. Keeps the array otherwise sparse.
   function setLevel(i: number, patch: Partial<LevelInput>) {
     setLevelStyles((prev) => {
       const next = [...prev];
       next[i] = { ...(next[i] ?? DEFAULT_LEVEL), ...patch };
       return next;
     });
+  }
+  function setTitle(patch: Partial<TitleInput>) {
+    setTitleInput((prev) => ({ ...prev, ...patch }));
   }
 
   function handlePaste(e: ClipboardEvent<HTMLDivElement>) {
@@ -149,17 +160,17 @@ export function PasteInput() {
       const next: TableState = {
         id,
         grid: rows,
-        pivotLevels: [], // nothing placed yet; user builds the outline
-        markers: [], // sparse -> default 1./a./i. cycle until the user picks
-        fieldLabels: {}, // per-col label look; default (shown, plain) until edited
-        sortDirs: {}, // per-col sort; absent col -> off (first-seen order)
-        breakAfter: [], // per-level "blank line after"; default off
-        numbering: DEFAULT_NUMBERING, // app-drawn multilevel numbers; off by default
-        headingLevels: [], // per-level "make a Word heading"; default none
+        pivotLevels: [],
+        markers: [],
+        fieldLabels: {},
+        sortDirs: {},
+        breakAfter: [],
+        numbering: DEFAULT_NUMBERING,
+        headingLevels: [],
         sectionTitle: "",
       };
       setTables((prev) => [...prev, next]);
-      setActiveId(id); // open the just-pasted table
+      setActiveId(id);
       setError(null);
       setStatus(`Added table ${tables.length + 1}.`);
     } catch (err) {
@@ -174,8 +185,6 @@ export function PasteInput() {
   }
 
   function removeTable(id: string) {
-    // If the open tab is removed, fall to the next tab (or the previous one if
-    // it was the last). Computed from the pre-removal order.
     setActiveId((curr) => {
       if (curr !== id) return curr;
       const idx = tables.findIndex((t) => t.id === id);
@@ -192,10 +201,6 @@ export function PasteInput() {
     setError(null);
   }
 
-  // Combined export: concatenate every table's fragment and wrap ONCE. Valid
-  // because buildWordHtml's rewrites are global and it emits a single @page rule,
-  // so the whole stack becomes one Word doc (tables in paste order). Built
-  // synchronously before any await to keep the user gesture.
   async function copyAll() {
     if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
       setCopyAllState("error");
@@ -203,9 +208,7 @@ export function PasteInput() {
       return;
     }
     const titleIsHeading = isHeadingStyleSet(headingStyleName);
-    const combined = tables
-      .map((t) => tableToHtml(t, titleIsHeading))
-      .join("\n");
+    const combined = tables.map((t) => tableToHtml(t, titleIsHeading)).join("\n");
     try {
       const item = new ClipboardItem({
         "text/html": new Blob([buildWordHtml(combined, headingStyle, bodyFont)], {
@@ -224,20 +227,14 @@ export function PasteInput() {
   }
 
   const atLimit = tables.length >= MAX_TABLES;
-  // The open tab; fall back to the first table if the id ever goes stale.
   const activeTable = tables.find((t) => t.id === activeId) ?? tables[0] ?? null;
 
-  // Whether the title is a real Word heading (a shared Heading style is set); it
-  // sets the body heading-row level so the preview matches the export.
   const titleIsHeading = isHeadingStyleSet(headingStyleName);
-  // The active table's rendered fragment for the pinned preview + per-table copy.
   const activeHtml = useMemo(
     () => (activeTable ? tableToHtml(activeTable, titleIsHeading) : ""),
     [activeTable, titleIsHeading],
   );
 
-  // Copy JUST the active table to the clipboard as a Word document. Built
-  // synchronously before any await to preserve the user-gesture requirement.
   async function copyForWord() {
     if (
       !activeTable ||
@@ -266,28 +263,21 @@ export function PasteInput() {
     setTimeout(() => setCopyState("idle"), 2000);
   }
 
-  // One level row per depth actually in use across all pivots: bucket (indent
-  // level) count + 1 for a title (the title is level 1). Stacked fields share a
-  // bucket, so they don't add depth. Clamped to Word's 9-level max.
   const maxDepth = Math.min(
     9,
     Math.max(
       1,
-      ...tables.map(
-        (t) => t.pivotLevels.length + (t.sectionTitle.trim() ? 1 : 0),
-      ),
+      ...tables.map((t) => t.pivotLevels.length + (t.sectionTitle.trim() ? 1 : 0)),
     ),
   );
 
-  // The paste drop zone, reused for the empty state (big) and the workspace
-  // (compact). Focus + Ctrl/Cmd+V appends a table.
   const pasteZone = (big: boolean) => (
     <div
       tabIndex={0}
       aria-label="Paste area. Focus here, then press Control plus V to paste a table copied from Excel or Google Sheets."
       aria-keyshortcuts="Control+V"
       onPaste={handlePaste}
-      className={`flex cursor-text items-center justify-center rounded-xl border-2 border-dashed border-foreground/25 bg-foreground/[0.02] text-center text-foreground/60 outline-none transition-colors focus:border-foreground/50 focus:bg-foreground/[0.04] ${
+      className={`flex cursor-text items-center justify-center rounded-lg border-2 border-dashed border-border-strong bg-surface-alt text-center text-muted outline-none transition-colors focus:border-accent focus:bg-accent-subtle ${
         big ? "min-h-[10rem] p-8 text-base" : "min-h-[4.5rem] p-4 text-sm"
       }`}
     >
@@ -298,11 +288,11 @@ export function PasteInput() {
       ) : tables.length === 0 ? (
         <span>
           Click here and press{" "}
-          <kbd className="rounded border border-foreground/30 px-1.5 py-0.5 font-mono text-xs">
+          <kbd className="rounded border border-border-strong px-1.5 py-0.5 font-mono text-xs">
             Ctrl
           </kbd>{" "}
           +{" "}
-          <kbd className="rounded border border-foreground/30 px-1.5 py-0.5 font-mono text-xs">
+          <kbd className="rounded border border-border-strong px-1.5 py-0.5 font-mono text-xs">
             V
           </kbd>{" "}
           to paste a table copied from Excel or Google Sheets.
@@ -310,11 +300,11 @@ export function PasteInput() {
       ) : (
         <span>
           Paste another table to add a section (click here, then{" "}
-          <kbd className="rounded border border-foreground/30 px-1 py-0.5 font-mono text-[11px]">
+          <kbd className="rounded border border-border-strong px-1 py-0.5 font-mono text-[11px]">
             Ctrl
           </kbd>
           +
-          <kbd className="rounded border border-foreground/30 px-1 py-0.5 font-mono text-[11px]">
+          <kbd className="rounded border border-border-strong px-1 py-0.5 font-mono text-[11px]">
             V
           </kbd>
           ).
@@ -326,33 +316,34 @@ export function PasteInput() {
   const errorBanner = error && (
     <p
       role="alert"
-      className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
+      className="rounded border border-[color:var(--danger-border)] bg-[color:var(--danger-bg)] px-4 py-3 text-sm text-danger"
     >
       {error}
     </p>
   );
-  // Visually-hidden polite live region: announces a successful paste.
   const statusRegion = (
     <p className="sr-only" role="status" aria-live="polite">
       {status}
     </p>
   );
 
-  const actionBtn =
-    "rounded-md border border-foreground/20 px-3 py-1 text-xs font-medium transition-colors hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-50";
-
-  // ---- Empty state: a single big paste zone, no chrome yet. -------------------
+  // ---- Empty state -----------------------------------------------------------
   if (tables.length === 0) {
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 px-6 py-12">
-        <header className="flex flex-col gap-2">
-          <h1 className="text-2xl font-bold tracking-tight">
-            Excel &rarr; Word Sections
-          </h1>
-          <p className="text-foreground/60">
-            Paste a table copied from Excel or Google Sheets to restructure it
-            into a Word-ready nested outline, then copy it for Word.
-          </p>
+        <header className="flex items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded bg-accent text-lg font-bold text-accent-fg">
+            W
+          </span>
+          <div className="flex flex-col">
+            <h1 className="text-xl font-semibold tracking-tight">
+              Excel &rarr; Word Sections
+            </h1>
+            <p className="text-sm text-muted">
+              Paste an Excel/Sheets table to restructure it into a Word-ready
+              nested outline, then copy it for Word.
+            </p>
+          </div>
         </header>
         {pasteZone(true)}
         {errorBanner}
@@ -361,34 +352,40 @@ export function PasteInput() {
     );
   }
 
-  // ---- Workspace: the 4-pane IDE shell. --------------------------------------
+  // ---- Workspace: the Fluent 4-pane IDE --------------------------------------
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* TOP control band: identity + global actions, with a collapsible global
-          styling panel (everything here applies to ALL tables). */}
-      <header className="flex flex-col border-b border-foreground/15 bg-foreground/[0.02]">
-        <div className="flex flex-wrap items-center gap-3 px-4 py-2">
-          <h1 className="text-sm font-semibold tracking-tight">
-            Excel &rarr; Word
-          </h1>
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
+      {/* TOP command band */}
+      <header className="flex flex-col border-b border-border bg-surface shadow-[var(--shadow-2)]">
+        <div className="flex flex-wrap items-center gap-2 px-2 py-1.5">
+          <span className="ml-1 flex items-center gap-2 font-semibold">
+            <span className="grid h-5 w-5 place-items-center rounded-[3px] bg-accent text-xs font-bold text-accent-fg">
+              W
+            </span>
+            <h1 className="text-sm">Excel &rarr; Word</h1>
+          </span>
           <span className="text-xs text-muted">
             {tables.length} of {MAX_TABLES} sections
           </span>
+          <span className="mx-1 h-6 w-px bg-border" />
           <button
             type="button"
             onClick={() => setShowStyles((v) => !v)}
             aria-expanded={showStyles}
-            className={actionBtn}
+            className={BTN_SUBTLE}
           >
             {showStyles ? "▾" : "▸"} Level styles &amp; document
           </button>
-          <ScopeBadge>Applies to all tables</ScopeBadge>
+          <ScopeBadge>All tables</ScopeBadge>
           <div className="ml-auto flex items-center gap-2">
+            <button type="button" onClick={clearAll} className={BTN_SUBTLE}>
+              Clear all
+            </button>
             <button
               type="button"
               onClick={copyAll}
               title="Copies every table as one Word doc (stacked in paste order)."
-              className={actionBtn}
+              className={BTN_PRIMARY}
             >
               {copyAllState === "copied"
                 ? "Copied all!"
@@ -396,39 +393,23 @@ export function PasteInput() {
                   ? "Copy failed"
                   : "Copy all"}
             </button>
-            <button type="button" onClick={clearAll} className={actionBtn}>
-              Clear all
-            </button>
           </div>
         </div>
 
         {showStyles && (
-          <div className="flex flex-col gap-3 border-t border-foreground/10 px-4 py-3 text-sm text-foreground/70">
+          <div className="flex flex-col gap-3 border-t border-border px-4 py-3 text-sm text-text-secondary">
             <p className="text-xs text-muted">
-              Set a <strong>Heading style</strong> name (e.g.{" "}
-              <strong>Heading 1</strong>) and paste with{" "}
-              <strong>Use Destination Styles</strong> so the title adopts your
-              document&rsquo;s heading. Leave it blank to use the app&rsquo;s
-              direct level-1 look. The body always uses the Level styles below.
+              These style the <strong>nested body rows</strong> and the document,
+              and apply to every table. (The title is styled in its own{" "}
+              <strong>Section Header</strong> group.)
             </p>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <label className="flex items-center gap-1.5">
-                Heading style
-                <input
-                  type="text"
-                  value={headingStyleName}
-                  onChange={(e) => setHeadingStyleName(e.target.value)}
-                  placeholder="(direct)"
-                  aria-label="Word style name for the title"
-                  className="w-32 rounded-md border border-foreground/20 px-2 py-1 text-sm text-foreground"
-                />
-              </label>
               <label className="flex items-center gap-1.5">
                 Body font
                 <select
                   value={bodyFont}
                   onChange={(e) => setBodyFont(e.target.value)}
-                  className="rounded-md border border-foreground/20 px-2 py-1 text-sm text-foreground"
+                  className={FIELD}
                 >
                   {HEADING_FONTS.map((f) => (
                     <option key={f} value={f}>
@@ -447,7 +428,7 @@ export function PasteInput() {
                     setIndentInput(e.target.value.replace(/[^0-9.]/g, ""))
                   }
                   aria-label="Indent per nesting level, in inches"
-                  className="w-14 rounded-md border border-foreground/20 px-2 py-1 text-sm text-foreground"
+                  className={`${FIELD} w-14`}
                 />
               </label>
               <button
@@ -455,16 +436,16 @@ export function PasteInput() {
                 onClick={() => setLevelStyles([])}
                 disabled={levelStyles.length === 0}
                 title="Reset every level to the default look"
-                className={actionBtn}
+                className={BTN_STD}
               >
                 Reset levels
               </button>
             </div>
             <div className="flex flex-col gap-1.5">
-              <span className="text-foreground/60">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted">
                 Level styles{" "}
-                <span className="text-muted">
-                  (Level 1 = title when no Heading style is set; 2-9 = nested rows)
+                <span className="font-normal normal-case">
+                  (nested body rows, by depth)
                 </span>
               </span>
               {Array.from({ length: maxDepth }, (_, i) => {
@@ -474,7 +455,7 @@ export function PasteInput() {
                     key={i}
                     className="flex flex-wrap items-center gap-x-3 gap-y-1.5"
                   >
-                    <span className="w-14 text-foreground/60">Level {i + 1}</span>
+                    <span className="w-14 text-text-secondary">Level {i + 1}</span>
                     <label className="flex items-center gap-1.5">
                       Color
                       <input
@@ -482,7 +463,7 @@ export function PasteInput() {
                         value={lv.color}
                         onChange={(e) => setLevel(i, { color: e.target.value })}
                         aria-label={`Level ${i + 1} color`}
-                        className="h-6 w-8 cursor-pointer rounded border border-foreground/20"
+                        className="h-7 w-8 cursor-pointer rounded border border-border-strong"
                       />
                     </label>
                     <label className="flex items-center gap-1.5">
@@ -491,7 +472,7 @@ export function PasteInput() {
                         value={lv.font}
                         onChange={(e) => setLevel(i, { font: e.target.value })}
                         aria-label={`Level ${i + 1} font`}
-                        className="rounded-md border border-foreground/20 px-2 py-1 text-sm text-foreground"
+                        className={FIELD}
                       >
                         {HEADING_FONTS.map((f) => (
                           <option key={f} value={f}>
@@ -512,7 +493,7 @@ export function PasteInput() {
                           })
                         }
                         aria-label={`Level ${i + 1} size in points`}
-                        className="w-12 rounded-md border border-foreground/20 px-2 py-1 text-sm text-foreground"
+                        className={`${FIELD} w-12`}
                       />
                     </label>
                     <label className="flex items-center gap-1.5">
@@ -520,6 +501,7 @@ export function PasteInput() {
                         type="checkbox"
                         checked={lv.bold}
                         onChange={(e) => setLevel(i, { bold: e.target.checked })}
+                        className="accent-[var(--accent)]"
                       />
                       Bold
                     </label>
@@ -534,31 +516,27 @@ export function PasteInput() {
       {errorBanner && <div className="px-4 pt-3">{errorBanner}</div>}
       {statusRegion}
 
-      {/* WORKSPACE: left sections rail | center builder | right pinned preview.
-          overflow-x-auto so a very narrow viewport can scroll to the right pane
-          instead of the fixed-width panes being clipped by body overflow-hidden. */}
+      {/* WORKSPACE */}
       <div className="flex min-h-0 flex-1 overflow-x-auto">
-        {/* LEFT: sections navigator. */}
-        <aside className="flex w-56 shrink-0 flex-col overflow-y-auto border-r border-foreground/15 bg-foreground/[0.015] p-2">
-          <div className="flex items-center justify-between px-1 pb-1.5">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted">
-              Sections
-            </span>
+        {/* LEFT: sections rail */}
+        <aside className="flex w-56 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface-alt p-2">
+          <div className="border-b border-border px-2 pb-1.5 pt-1 text-xs font-semibold uppercase tracking-wide text-muted">
+            Sections
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="mt-1 flex flex-col gap-0.5">
             {tables.map((t, i) => {
               const isActive = activeTable?.id === t.id;
               const label = t.sectionTitle.trim() || `Table ${i + 1}`;
               return (
                 <div
                   key={t.id}
-                  className={`group flex items-center gap-1.5 rounded-md border-l-2 py-1.5 pr-1.5 pl-2 text-xs transition-colors ${
+                  className={`group relative flex h-9 items-center gap-2 rounded pl-3 pr-1.5 text-sm transition-colors ${
                     isActive
-                      ? "border-l-foreground/70 bg-foreground/[0.07] font-medium text-foreground"
-                      : "border-l-transparent text-foreground/60 hover:bg-foreground/5"
+                      ? "bg-accent-subtle font-semibold text-accent-text before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-accent before:content-['']"
+                      : "text-text-secondary hover:bg-surface"
                   }`}
                 >
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-foreground/10 text-[10px] tabular-nums text-foreground/60">
+                  <span className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-[11px] tabular-nums text-muted">
                     {i + 1}
                   </span>
                   <button
@@ -574,7 +552,7 @@ export function PasteInput() {
                     onClick={() => removeTable(t.id)}
                     aria-label={`Remove ${label}`}
                     title="Remove this table"
-                    className="shrink-0 px-1 leading-none text-foreground/30 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                    className="shrink-0 px-1 leading-none text-muted opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                   >
                     &times;
                   </button>
@@ -582,35 +560,39 @@ export function PasteInput() {
               );
             })}
           </div>
-          <p className="mt-2 px-1 text-[11px] leading-snug text-muted">
+          <p className="mt-2 px-2 text-[11px] leading-snug text-muted">
             Paste another table (in the center) to add a section.
           </p>
         </aside>
 
-        {/* CENTER: paste zone + the active table's builder. */}
-        <section className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+        {/* CENTER: the two command groups */}
+        <section className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
           {pasteZone(false)}
           {activeTable && (
             <TableCard
               key={activeTable.id}
               table={activeTable}
               onChange={(patch) => patchTable(activeTable.id, patch)}
+              headingStyleName={headingStyleName}
+              onHeadingStyleChange={setHeadingStyleName}
+              title={titleInput}
+              onTitleChange={setTitle}
             />
           )}
         </section>
 
-        {/* RIGHT: pinned live preview + per-table export. */}
-        <section className="flex w-[38%] min-w-[20rem] shrink-0 flex-col overflow-hidden border-l border-foreground/15">
-          <div className="flex items-center gap-2 border-b border-foreground/15 bg-foreground/[0.02] px-3 py-1.5">
-            <div className="flex items-center gap-0.5 rounded-md border border-foreground/15 p-0.5 text-xs">
+        {/* RIGHT: pinned preview */}
+        <section className="flex w-[38%] min-w-80 shrink-0 flex-col overflow-hidden border-l border-border">
+          <div className="flex items-center gap-2 border-b border-border bg-surface px-2.5 py-1.5">
+            <div className="inline-flex gap-0.5 rounded bg-surface-alt p-0.5 text-xs">
               <button
                 type="button"
                 aria-pressed={view === "rendered"}
                 onClick={() => setView("rendered")}
-                className={`rounded px-2 py-0.5 transition-colors ${
+                className={`rounded px-2.5 py-1 font-semibold transition-colors ${
                   view === "rendered"
-                    ? "bg-foreground/10 font-medium text-foreground"
-                    : "text-foreground/60 hover:bg-foreground/5"
+                    ? "bg-surface text-foreground shadow-[var(--shadow-2)]"
+                    : "text-text-secondary hover:text-foreground"
                 }`}
               >
                 Preview
@@ -619,10 +601,10 @@ export function PasteInput() {
                 type="button"
                 aria-pressed={view === "json"}
                 onClick={() => setView("json")}
-                className={`rounded px-2 py-0.5 transition-colors ${
+                className={`rounded px-2.5 py-1 font-semibold transition-colors ${
                   view === "json"
-                    ? "bg-foreground/10 font-medium text-foreground"
-                    : "text-foreground/60 hover:bg-foreground/5"
+                    ? "bg-surface text-foreground shadow-[var(--shadow-2)]"
+                    : "text-text-secondary hover:text-foreground"
                 }`}
               >
                 JSON
@@ -633,8 +615,8 @@ export function PasteInput() {
               type="button"
               onClick={copyForWord}
               disabled={activeHtml === ""}
-              title="Copies this table's HTML to paste into Word. For the title to match your document's Heading 1, paste with 'Use Destination Styles'."
-              className={`ml-auto ${actionBtn}`}
+              title="Copies this table's HTML to paste into Word. Paste with 'Use Destination Styles' so the title maps to your heading."
+              className={`ml-auto ${BTN_PRIMARY}`}
             >
               {copyState === "copied"
                 ? "Copied!"

@@ -1,31 +1,109 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Microsoft Fluent 2 / Office design tokens.
+   Accent = Microsoft Teams blurple (#5b5fc7). Flat cool-grey surfaces (white
+   cards on a #f5f5f5 canvas), Segoe UI chrome, 4px controls / 8px cards, a crisp
+   2px keyboard focus ring, and brand-tinted "pressed-in" toggles.
+   --foreground / --background / --muted keep their names so existing utilities
+   (text-foreground, bg-background, text-muted) resolve; their VALUES move to the
+   Fluent neutral ramp.
+--------------------------------------------------------------------------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  /* Muted text token for instructional/helper copy. ~7:1 on white, so it clears
-     WCAG AA (4.5:1) where a low-opacity foreground tint would not. */
-  --muted: #595959;
+  --background: #f5f5f5; /* app canvas (Fluent grey96) */
+  --surface: #ffffff; /* cards, command band, preview page */
+  --surface-alt: #fafafa; /* rail, input fills, hover rows */
+  --border: #e0e0e0; /* dividers, card hairlines */
+  --border-strong: #d1d1d1; /* input/button outlines */
+  --foreground: #242424; /* primary text (NeutralForeground1) */
+  --text-secondary: #424242; /* secondary text */
+  --muted: #616161; /* hints, group captions (AA on white) */
+
+  --accent: #5b5fc7; /* Teams blurple */
+  --accent-hover: #4f52b2;
+  --accent-pressed: #444791;
+  --accent-fg: #ffffff; /* text/icon on accent fills */
+  --accent-text: #4f52b2; /* accent as link/label text on surfaces */
+  --accent-subtle: #ecedfb; /* selected row, active tab, pressed toggle */
+  --focus: #5b5fc7; /* 2px keyboard focus outline */
+
+  --success: #0e700e;
+  --warning: #bc4b09;
+  --danger: #b10e1c;
+  --danger-bg: #fdf3f4;
+  --danger-border: #eeacb2;
+
+  --shadow-2: 0 0 2px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.14);
+  --shadow-4: 0 0 2px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.14);
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
+  --color-text-secondary: var(--text-secondary);
   --color-muted: var(--muted);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-focus: var(--focus);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  /* Segoe UI chrome (ships on Windows, so no font CDN needed); Geist Mono stays
+     for the JSON preview only. */
+  --font-sans: "Segoe UI", "Segoe UI Variable", system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), "Cascadia Code", Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    --muted: #a3a3a3;
+    --background: #1f1f1f;
+    --surface: #292929;
+    --surface-alt: #333333;
+    --border: #3d3d3d;
+    --border-strong: #525252;
+    --foreground: #ffffff;
+    --text-secondary: #d6d6d6;
+    --muted: #adadad;
+
+    --accent: #8b90e8; /* Teams blurple lifted for dark AA */
+    --accent-hover: #9ea3ee;
+    --accent-pressed: #6d72d6;
+    --accent-fg: #ffffff;
+    --accent-text: #a6abf0;
+    --accent-subtle: #24264a;
+    --focus: #a6abf0;
+
+    --success: #54b054;
+    --warning: #faa06b;
+    --danger: #e37d80;
+    --danger-bg: #3b0509;
+    --danger-border: #6d2a2e;
+
+    --shadow-2: 0 0 2px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-4: 0 0 2px rgba(0, 0, 0, 0.4), 0 4px 8px rgba(0, 0, 0, 0.5);
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+}
+
+/* Fluent keyboard focus: crisp 2px accent ring, only on keyboard nav. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }

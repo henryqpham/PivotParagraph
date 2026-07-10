@@ -15,8 +15,10 @@ import type { HeadingStyle } from "@/lib/clipboard";
  * keep-source paste will produce. The style values are sanitized in the form
  * (hex color, allow-listed font, clamped sizes).
  */
+// A white "paper" surface (a Word-page proxy) that stays white in BOTH themes,
+// floating on the canvas with a Fluent depth shadow.
 const previewClasses =
-  "ws-preview rounded-lg border border-foreground/15 bg-foreground/[0.03] p-4 text-sm " +
+  "ws-preview rounded-[2px] bg-white p-6 text-sm text-[#242424] shadow-[var(--shadow-4)] " +
   "[&_.ws-title]:mt-1 [&_[data-level]]:mt-1 [&_p]:my-0.5 [&_p]:leading-tight";
 
 export function RenderedPreview({
@@ -54,8 +56,22 @@ export function RenderedPreview({
   // shows them verbatim. A heading row (`data-heading`) instead sits flush-left and
   // bold (it loses the body indent in Word) with a muted "#" where Word inserts the
   // live heading number on paste.
+  // The title has its OWN shared look (set in the Section Header group), not the
+  // level chart -- so read it from headingStyle.titleStyle, with italic/underline.
+  const t = headingStyle.titleStyle ?? {
+    color: "#000000",
+    font: "Arial",
+    size: 11,
+    bold: false,
+    italic: false,
+    underline: false,
+  };
+  const titleRule =
+    `.ws-preview .ws-title{color:${t.color};font-family:'${t.font}';font-size:${t.size}pt;` +
+    `font-weight:${t.bold ? 700 : 400};font-style:${t.italic ? "italic" : "normal"};` +
+    `text-decoration:${t.underline ? "underline" : "none"}}`;
   const css =
-    rule(".ws-title", 0, "") +
+    titleRule +
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
     ).join("") +

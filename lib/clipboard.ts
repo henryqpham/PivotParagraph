@@ -28,10 +28,27 @@ export type LevelStyle = {
  *   Styles" paste adopts the destination document's heading style. Blank =
  *   the app's direct level-1 look. The body is always the app's direct look.
  */
+/**
+ * The title's own direct look (font/size/color + bold/italic/underline), SHARED
+ * across tables. Used for the `ws-title` row when NO Word Heading style is mapped;
+ * a mapped title (Heading N) adopts the destination document's look instead, so
+ * this is ignored there. Kept separate from `levels` so the title is styled in its
+ * own dedicated "Section Header" group, not buried in the per-level "level chart".
+ */
+export type TitleStyle = {
+  font: string;
+  size: number; // pt
+  color: string; // hex
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+};
+
 export type HeadingStyle = {
   levels: LevelStyle[];
   indentStep: number; // inches of left-indent per nesting level
   headingStyleName: string; // Word style for the title ("" = direct look)
+  titleStyle?: TitleStyle; // the title's own direct look (when not mapped)
 };
 
 /**
@@ -63,6 +80,16 @@ const FALLBACK_LEVEL: LevelStyle = {
   font: "Arial",
   size: 11,
   bold: false,
+};
+
+// Title default when no `titleStyle` is supplied (matches the old level-1 look).
+const FALLBACK_TITLE: TitleStyle = {
+  font: "Arial",
+  size: 11,
+  color: "#000000",
+  bold: false,
+  italic: false,
+  underline: false,
 };
 
 /**
@@ -112,6 +139,21 @@ export function buildWordHtml(
   const wrapBold = (i: number, content: string) =>
     lvl(i).bold ? `<b>${content}</b>` : content;
 
+  // The title's own direct look + bold/italic/underline runs, used for the
+  // `ws-title` row when it isn't mapped to a Word heading. Underline innermost,
+  // then italic, then bold (all <b>/<i>/<u> runs survive a Use-Destination paste).
+  const ts = heading.titleStyle ?? FALLBACK_TITLE;
+  const titleStyleAttr =
+    `margin-top:0in;margin-bottom:0in;line-height:115%;` +
+    `color:${ts.color};font-family:'${ts.font}';font-size:${ts.size}pt`;
+  const wrapTitle = (content: string) => {
+    let h = content;
+    if (ts.underline) h = `<u>${h}</u>`;
+    if (ts.italic) h = `<i>${h}</i>`;
+    if (ts.bold) h = `<b>${h}</b>`;
+    return h;
+  };
+
   // Body heading levels seen on `data-heading="K"` rows (levels the user mapped to
   // a Word heading for nav + collapsibility); each gets a mapped-style rule below.
   const bodyHeadings = new Set<number>();
@@ -121,7 +163,7 @@ export function buildWordHtml(
     .replace(/<p class="ws-title">([\s\S]*?)<\/p>/g, (_m, content: string) =>
       headingName
         ? `<p class="MsoTitle">${content}</p>`
-        : `<p style="${directStyle(0, 1)}">${wrapBold(0, content)}</p>`,
+        : `<p style="${titleStyleAttr}">${wrapTitle(content)}</p>`,
     )
     // Nested rows. A `data-heading="K"` line is a level mapped to a Word heading:
     // map it to the destination "Heading K" style so a Use-Destination-Styles paste

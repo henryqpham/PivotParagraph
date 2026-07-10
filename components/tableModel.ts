@@ -61,6 +61,27 @@ export type TableState = {
   sectionTitle: string;
 };
 
+/**
+ * One row of the GLOBAL per-depth body-row style editor, held as UI inputs (size
+ * a string so it can be cleared/retyped). Shared across ALL tables and keyed by
+ * DEPTH, not by table. Lives here (a module both PasteInput and TableCard already
+ * import) so the owner (PasteInput) and the docked "Appearance" editor (TableCard)
+ * can share the type + default without a component import cycle.
+ */
+export type LevelInput = {
+  color: string;
+  font: string;
+  sizeInput: string;
+  bold: boolean;
+};
+/** Default look for an untouched level: plain Arial 11 black (matches a body). */
+export const DEFAULT_LEVEL: LevelInput = {
+  color: "#000000",
+  font: "Arial",
+  sizeInput: "11",
+  bold: false,
+};
+
 // ---------------------------------------------------------------------------
 // Pure helpers on the bucket structure (`number[][]`). All return a fresh array
 // and never mutate. A "flattened index" `fi` is a field's position in

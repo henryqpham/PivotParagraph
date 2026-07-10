@@ -1,5 +1,5 @@
 // Word-output step: wrap the renderer's HTML fragment as Word-flavored HTML for
-// the clipboard ("Copy for Word"). The title maps to a destination Heading style
+// the clipboard ("Copy all"). The title maps to a destination Heading style
 // when a Heading style is named (so a "Use Destination Styles" paste adopts the
 // document's heading); every body paragraph is plain, directly-formatted text
 // (any multilevel numbers are already plain text in the fragment). renderPivotTree

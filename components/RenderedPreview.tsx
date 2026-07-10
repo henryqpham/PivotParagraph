@@ -11,7 +11,7 @@ import type { HeadingStyle } from "@/lib/clipboard";
  *
  * Tailwind v4 preflight strips heading sizes. We restore spacing with
  * arbitrary-descendant variants, and the heading look (color/font/size/weight)
- * from a scoped `<style>` so the preview matches what a "Copy for Word" +
+ * from a scoped `<style>` so the preview matches what a "Copy all" +
  * keep-source paste will produce. The style values are sanitized in the form
  * (hex color, allow-listed font, clamped sizes).
  */

@@ -3,6 +3,7 @@
 import { memo, useMemo, useState } from "react";
 import { defaultMarker, type MarkerKind } from "@/lib/renderers";
 import { DEFAULT_FIELD_LABEL, type FieldLabel } from "@/lib/types";
+import { Popover } from "./Popover";
 import {
   addField,
   canIndent,
@@ -12,6 +13,8 @@ import {
   outdentField,
   removeField,
   unusedColumns,
+  DEFAULT_LEVEL,
+  type LevelInput,
   type TableState,
 } from "./tableModel";
 
@@ -25,7 +28,9 @@ export type TitleInput = {
   underline: boolean;
 };
 
-const FONTS = [
+/** Allow-listed body/title fonts. Exported so PasteInput's Document popover can
+ *  reuse the same list without redefining it. */
+export const FONTS = [
   "Calibri Light",
   "Calibri",
   "Arial",
@@ -68,6 +73,79 @@ const FIELD =
 const BADGE =
   "rounded-sm bg-[color:color-mix(in_srgb,var(--muted)_14%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted";
 
+/** Per-row Windows-Explorer connector state, derived from the flat depth list. */
+type RowGuides = {
+  /** For each ancestor depth a in 0..b-1: does that level have another sibling
+   *  further down (→ a continuing │) or not (→ a blank spacer)? Length === depth. */
+  ancestors: boolean[];
+  /** Is this row the last field of its level in its parent group (└ vs ├)? */
+  last: boolean;
+};
+
+/**
+ * Windows-Explorer connector guides for the flat, depth-indexed Structure list. For
+ * each row and each ancestor depth we look ahead for the next sibling at that depth
+ * (stopping if we leave the ancestor's scope), and likewise decide whether the row
+ * is the last at its own depth. Correct for stacked fields (several fields at one
+ * depth). O(n·depth) — fine for a field list.
+ */
+function rowGuides(placed: { b: number }[]): RowGuides[] {
+  const depths = placed.map((p) => p.b);
+  const n = depths.length;
+  return depths.map((d, i) => {
+    const ancestors: boolean[] = [];
+    for (let a = 0; a < d; a++) {
+      let continues = false;
+      for (let j = i + 1; j < n; j++) {
+        if (depths[j] < a) break; // left the ancestor's parent group
+        if (depths[j] === a) {
+          continues = true; // a later sibling exists at depth a
+          break;
+        }
+      }
+      ancestors.push(continues);
+    }
+    let last = true;
+    for (let j = i + 1; j < n; j++) {
+      if (depths[j] < d) break;
+      if (depths[j] === d) {
+        last = false; // a later sibling at this row's own depth
+        break;
+      }
+    }
+    return { ancestors, last };
+  });
+}
+
+/** One 20px guide column: a continuing │, an elbow (├/└), or a blank spacer.
+ *  Absolute 1px borders on --border-strong render crisply in light + dark. */
+function GuideCell({ kind }: { kind: "line" | "tee" | "corner" | "blank" }) {
+  const v = "absolute left-1/2 border-l border-border-strong";
+  return (
+    <span className="relative w-5 shrink-0">
+      {(kind === "line" || kind === "tee") && (
+        <span className={`${v} top-0 bottom-0`} />
+      )}
+      {kind === "corner" && <span className={`${v} top-0 h-1/2`} />}
+      {(kind === "tee" || kind === "corner") && (
+        <span className="absolute left-1/2 right-0 top-1/2 border-t border-border-strong" />
+      )}
+    </span>
+  );
+}
+
+/**
+ * The GLOBAL per-depth body look (owned by PasteInput), edited inline in the
+ * matrix's "Look" column so a level's look sits with the level that defines it.
+ * Document-wide settings (body font / indent / reset) now live in PasteInput's
+ * top-band "Document" popover, so this contract is just the two the Look column
+ * needs (both shared across every section).
+ */
+type AppearanceControls = {
+  levelStyles: LevelInput[];
+  onLevelChange: (i: number, patch: Partial<LevelInput>) => void;
+};
+
 type Props = {
   table: TableState;
   onChange: (patch: Partial<TableState>) => void;
@@ -77,6 +155,8 @@ type Props = {
   /** Shared title look (font/size/color + bold/italic/underline). */
   title: TitleInput;
   onTitleChange: (patch: Partial<TitleInput>) => void;
+  /** Global per-depth body look (all tables), edited in the matrix "Look" column. */
+  appearance: AppearanceControls;
 };
 
 function TableCardInner({
@@ -86,12 +166,21 @@ function TableCardInner({
   onHeadingStyleChange,
   title,
   onTitleChange,
+  appearance,
 }: Props) {
   // Start-number field held as a string so it can be cleared/retyped (the card is
   // keyed by table id, so this resets per table).
   const [startInput, setStartInput] = useState(String(table.numbering.start));
+  // Which per-level "Look" popover (by level index) is open, or null.
+  const [openPop, setOpenPop] = useState<number | null>(null);
 
   const { grid, pivotLevels } = table;
+  // A body bucket's GLOBAL level-style slot = its indent depth, +1 when a Section
+  // title sits above it (mirrors the renderer's walk(nodes, 2, 1)); clamp to the
+  // 9-entry chart. Keeps each matrix "Look" cell driving the same data-level the
+  // Word export uses, so preview and paste stay in sync.
+  const titleOffset = table.sectionTitle.trim() ? 1 : 0;
+  const levelIdxForBucket = (b: number) => Math.min(8, b + titleOffset);
 
   const headers = useMemo(
     () => (grid[0] ? grid[0].map((c) => (c == null ? "" : String(c))) : []),
@@ -114,6 +203,8 @@ function TableCardInner({
     );
     return out;
   }, [pivotLevels]);
+
+  const guides = useMemo(() => rowGuides(placed), [placed]);
 
   function patchLabel(col: number, patch: Partial<FieldLabel>) {
     const cur = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
@@ -288,17 +379,26 @@ function TableCardInner({
             {placed.length > 0 && (
               <>
                 <div className={SUB}>Structure</div>
-                <div className="flex flex-col gap-0.5">
+                {/* gap-0 so the vertical tree guides stay continuous row-to-row */}
+                <div className="flex flex-col">
                   {placed.map(({ col, b, fi }) => {
                     const name = headers[col] || `Column ${col + 1}`;
                     const lf = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
+                    const g = guides[fi];
                     return (
                       <div
                         key={col}
-                        className="flex items-center gap-1.5 rounded p-1 hover:bg-surface-alt"
-                        style={{ marginLeft: `${b * 1.25}rem` }}
+                        className="flex min-h-[36px] items-center gap-1.5 rounded px-1 hover:bg-surface-alt"
                       >
-                        <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-[11px] font-semibold tabular-nums text-muted">
+                        {/* Explorer tree-line guides: b ancestor cells + 1 elbow */}
+                        <span aria-hidden className="flex self-stretch">
+                          {g.ancestors.map((cont, a) => (
+                            <GuideCell key={a} kind={cont ? "line" : "blank"} />
+                          ))}
+                          <GuideCell kind={g.last ? "corner" : "tee"} />
+                        </span>
+
+                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-[11px] font-semibold tabular-nums text-muted">
                           {b + 1}
                         </span>
                         <span className="rounded-[3px] bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] px-2 py-0.5 text-xs font-semibold text-foreground">
@@ -439,7 +539,7 @@ function TableCardInner({
             {/* Numbering */}
             {pivotLevels.length > 0 && (
               <>
-                <div className={SUB}>Numbering</div>
+                <div className={SUB}>Markers</div>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={table.numbering.mode}
@@ -447,14 +547,15 @@ function TableCardInner({
                       onChange({
                         numbering: {
                           ...table.numbering,
-                          mode: e.target.value as "off" | "multilevel",
+                          mode: e.target.value as "off" | "custom" | "multilevel",
                         },
                       })
                     }
-                    aria-label="Multilevel numbering mode"
+                    aria-label="Marker / numbering mode"
                     className={FIELD}
                   >
-                    <option value="off">Off</option>
+                    <option value="off">Off (none)</option>
+                    <option value="custom">Custom (per level)</option>
                     <option value="multilevel">Multilevel numbers</option>
                   </select>
                   {table.numbering.mode === "multilevel" && (
@@ -484,126 +585,233 @@ function TableCardInner({
                       />
                     </>
                   )}
+                  <label className="ml-1 flex items-center gap-1.5 border-l border-border pl-3 text-xs text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={table.breakAfter[0] === true}
+                      onChange={(e) =>
+                        onChange({ breakAfter: e.target.checked ? [true] : [] })
+                      }
+                      aria-label="Blank line between top-level groups"
+                      title="Add a blank line after each top-level group (this section)"
+                      className="accent-[var(--accent)]"
+                    />
+                    Blank line between top-level groups
+                  </label>
                 </div>
               </>
             )}
 
-            {/* Markers (hidden when multilevel numbering replaces them) */}
-            {pivotLevels.length > 0 && table.numbering.mode !== "multilevel" && (
-              <>
-                <div className={SUB}>Markers</div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                  {pivotLevels.map((_, i) => (
-                    <label
-                      key={i}
-                      className="flex items-center gap-1.5 text-xs text-text-secondary"
-                    >
-                      Lv {i + 1}
-                      <select
-                        value={table.markers[i] ?? defaultMarker(i + 1)}
-                        onChange={(e) => {
-                          const next = [...table.markers];
-                          next[i] = e.target.value as MarkerKind;
-                          onChange({ markers: next });
-                        }}
-                        aria-label={`Marker for indent level ${i + 1}`}
-                        className={FIELD}
-                      >
-                        {MARKER_OPTIONS.map((o) => (
-                          <option key={o.kind} value={o.kind}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {/* Number level (only when numbering is on) */}
-            {pivotLevels.length > 0 && table.numbering.mode === "multilevel" && (
-              <>
-                <div className={SUB}>Number level</div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                  {pivotLevels.map((_, i) => (
-                    <label
-                      key={i}
-                      className="flex items-center gap-1.5 text-xs text-text-secondary"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={table.numbering.levels[i] !== false}
-                        onChange={(e) => {
-                          const next = [...table.numbering.levels];
-                          next[i] = e.target.checked;
-                          onChange({
-                            numbering: { ...table.numbering, levels: next },
-                          });
-                        }}
-                        aria-label={`Show the number on indent level ${i + 1}`}
-                        className="accent-[var(--accent)]"
-                      />
-                      Lv {i + 1}
-                    </label>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {/* Word heading */}
+            {/* Per-level matrix: one row per indent level (all PER-TABLE) — its
+                marker (or "show number" toggle when numbering is on) and Word-heading
+                mapping, aligned to the SAME numbered pill as Structure so a level
+                reads as one object across the card. The "blank line between top-level
+                groups" toggle now lives once beside Markers (no per-level Gap column);
+                every column here is this-section scope. */}
             {pivotLevels.length > 0 && (
               <>
-                <div className={SUB}>Word heading (nav pane, collapsible)</div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                  {pivotLevels.map((bucket, i) => (
-                    <label
-                      key={i}
-                      className="flex items-center gap-1.5 text-xs text-text-secondary"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={table.headingLevels[i] === true}
-                        onChange={(e) => {
-                          const next = [...table.headingLevels];
-                          next[i] = e.target.checked;
-                          onChange({ headingLevels: next });
-                        }}
-                        aria-label={`Make indent level ${i + 1} a Word heading`}
-                        className="accent-[var(--accent)]"
-                      />
-                      {headers[bucket[0]] || `Lv ${i + 1}`}
-                    </label>
-                  ))}
+                <div className={SUB}>Per-level</div>
+                <div>
+                  <div>
+                    <div className="flex items-center gap-2 px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                      <span className="w-[18px] shrink-0" />
+                      <span className="min-w-0 flex-1">Level</span>
+                      {table.numbering.mode !== "off" && (
+                        <span className="w-32 shrink-0">
+                          {table.numbering.mode === "multilevel"
+                            ? "Number"
+                            : "Marker"}
+                        </span>
+                      )}
+                      <span className="w-14 shrink-0 text-center">Heading</span>
+                      <span className="w-20 shrink-0 text-center text-accent-text">
+                        Look
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {pivotLevels.map((bucket, i) => {
+                        const label = headers[bucket[0]] || `Level ${i + 1}`;
+                        const idx = levelIdxForBucket(i);
+                        const lv = appearance.levelStyles[idx] ?? DEFAULT_LEVEL;
+                        return (
+                          <div
+                            key={i}
+                            className="flex items-center gap-2 rounded p-1 hover:bg-surface-alt"
+                          >
+                            <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-[11px] font-semibold tabular-nums text-muted">
+                              {i + 1}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                              {label}
+                            </span>
+                            {/* #/Mark cell — hidden in "off" mode: a per-level
+                                marker select in "custom" mode, or a show-number
+                                checkbox in "multilevel" mode. */}
+                            {table.numbering.mode !== "off" && (
+                              <div className="w-32 shrink-0">
+                                {table.numbering.mode === "multilevel" ? (
+                                <label className="flex items-center gap-1.5 text-xs text-text-secondary">
+                                  <input
+                                    type="checkbox"
+                                    checked={table.numbering.levels[i] !== false}
+                                    onChange={(e) => {
+                                      const next = [...table.numbering.levels];
+                                      next[i] = e.target.checked;
+                                      onChange({
+                                        numbering: {
+                                          ...table.numbering,
+                                          levels: next,
+                                        },
+                                      });
+                                    }}
+                                    aria-label={`Show the number on level ${i + 1}`}
+                                    className="accent-[var(--accent)]"
+                                  />
+                                  Show number
+                                </label>
+                              ) : (
+                                <select
+                                  value={table.markers[i] ?? defaultMarker(i + 1)}
+                                  onChange={(e) => {
+                                    const next = [...table.markers];
+                                    next[i] = e.target.value as MarkerKind;
+                                    onChange({ markers: next });
+                                  }}
+                                  aria-label={`Marker for level ${i + 1}`}
+                                  className={`${FIELD} w-full`}
+                                >
+                                  {MARKER_OPTIONS.map((o) => (
+                                    <option key={o.kind} value={o.kind}>
+                                      {o.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              </div>
+                            )}
+                            {/* Word heading */}
+                            <div className="flex w-14 shrink-0 justify-center">
+                              <input
+                                type="checkbox"
+                                checked={table.headingLevels[i] === true}
+                                onChange={(e) => {
+                                  const next = [...table.headingLevels];
+                                  next[i] = e.target.checked;
+                                  onChange({ headingLevels: next });
+                                }}
+                                aria-label={`Make level ${i + 1} a Word heading`}
+                                title="Map to a Word heading (Navigation pane, collapsible)"
+                                className="accent-[var(--accent)]"
+                              />
+                            </div>
+                            {/* Look (GLOBAL — all tables): color swatch inline +
+                                font/size/bold in a popover. Tinted so the
+                                this-section vs all-tables boundary stays obvious. */}
+                            <div className="relative flex w-20 shrink-0 items-center justify-center gap-1 rounded bg-accent-subtle py-0.5">
+                              <input
+                                type="color"
+                                value={lv.color}
+                                onChange={(e) =>
+                                  appearance.onLevelChange(idx, {
+                                    color: e.target.value,
+                                  })
+                                }
+                                aria-label={`${label} text color (all tables)`}
+                                title="Text color · all tables"
+                                className="h-6 w-6 cursor-pointer rounded border border-border-strong"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setOpenPop((p) => (p === i ? null : i))
+                                }
+                                aria-expanded={openPop === i}
+                                aria-label={`${label} font, size, bold (all tables)`}
+                                title="Font · size · bold · all tables"
+                                className="rounded border border-border-strong bg-surface px-1 text-[11px] font-semibold text-text-secondary transition-colors hover:border-accent hover:text-accent-text"
+                              >
+                                Aa▾
+                              </button>
+                              <Popover
+                                open={openPop === i}
+                                onClose={() => setOpenPop(null)}
+                              >
+                                <div className="flex flex-col gap-2">
+                                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                                    {label} look
+                                    <span className="ml-1 font-normal normal-case text-accent-text">
+                                      · all tables
+                                    </span>
+                                  </div>
+                                  <label className="flex items-center justify-between gap-3">
+                                    Font
+                                    <select
+                                      value={lv.font}
+                                      onChange={(e) =>
+                                        appearance.onLevelChange(idx, {
+                                          font: e.target.value,
+                                        })
+                                      }
+                                      aria-label={`${label} font`}
+                                      className={FIELD}
+                                    >
+                                      {FONTS.map((f) => (
+                                        <option key={f} value={f}>
+                                          {f}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="flex items-center justify-between gap-3">
+                                    Size (pt)
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={lv.sizeInput}
+                                      onChange={(e) =>
+                                        appearance.onLevelChange(idx, {
+                                          sizeInput: e.target.value.replace(
+                                            /[^0-9]/g,
+                                            "",
+                                          ),
+                                        })
+                                      }
+                                      aria-label={`${label} size in points`}
+                                      className={`${FIELD} w-16`}
+                                    />
+                                  </label>
+                                  <label className="flex items-center gap-1.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={lv.bold}
+                                      onChange={(e) =>
+                                        appearance.onLevelChange(idx, {
+                                          bold: e.target.checked,
+                                        })
+                                      }
+                                      className="accent-[var(--accent)]"
+                                    />
+                                    Bold
+                                  </label>
+                                </div>
+                              </Popover>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
-              </>
-            )}
-
-            {/* Blank line after */}
-            {pivotLevels.length > 0 && (
-              <>
-                <div className={SUB}>Blank line after each</div>
-                <select
-                  value={table.breakAfter.findIndex((b) => b) + 1}
-                  onChange={(e) => {
-                    const lvl = Number(e.target.value);
-                    onChange({
-                      breakAfter:
-                        lvl === 0
-                          ? []
-                          : pivotLevels.map((_, i) => i === lvl - 1),
-                    });
-                  }}
-                  aria-label="Add a blank line after each group at this level"
-                  className={`${FIELD} w-fit`}
-                >
-                  <option value={0}>(none)</option>
-                  {pivotLevels.map((bucket, i) => (
-                    <option key={i} value={i + 1}>
-                      {headers[bucket[0]] || `Level ${i + 1}`}
-                    </option>
-                  ))}
-                </select>
+                <p className="mt-1 text-[11px] text-muted">
+                  <strong>Marker · Heading</strong> apply to this section (Heading =
+                  Word Navigation pane).{" "}
+                  <span className="rounded-sm bg-accent-subtle px-1 text-accent-text">
+                    Look
+                  </span>{" "}
+                  (color + font/size/bold) is shared by depth across{" "}
+                  <strong>all tables</strong>. Body font &amp; indent live in the
+                  top-band <strong>Document</strong> button.
+                </p>
               </>
             )}
           </div>

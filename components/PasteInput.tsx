@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
-  type ReactNode,
 } from "react";
 import { parseClipboard } from "@/lib/parser";
 import {
@@ -15,31 +14,19 @@ import {
 } from "@/lib/clipboard";
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
 import { DEFAULT_NUMBERING } from "@/lib/renderers";
-import { tableToHtml, type TableState } from "./tableModel";
-import { TableCard, type TitleInput } from "./TableCard";
+import {
+  tableToHtml,
+  DEFAULT_LEVEL,
+  type LevelInput,
+  type TableState,
+} from "./tableModel";
+import { TableCard, FONTS, type TitleInput } from "./TableCard";
+import { Popover } from "./Popover";
 import { RenderedPreview } from "./RenderedPreview";
 import { JsonPreview } from "./JsonPreview";
 
-const HEADING_FONTS = [
-  "Calibri Light",
-  "Calibri",
-  "Arial",
-  "Times New Roman",
-  "Georgia",
-  "Cambria",
-];
-
 const MAX_TABLES = 100;
 
-// One row of the per-level editor (size kept as a string so it can be cleared).
-type LevelInput = { color: string; font: string; sizeInput: string; bold: boolean };
-// Default look for an untouched level: plain Arial 11 black (matches a document body).
-const DEFAULT_LEVEL: LevelInput = {
-  color: "#000000",
-  font: "Arial",
-  sizeInput: "11",
-  bold: false,
-};
 // Default TITLE look (its own shared style now — Arial 11 black, matching the old
 // level-1 default; only shows when the Heading dropdown is None).
 const DEFAULT_TITLE: TitleInput = {
@@ -56,17 +43,9 @@ const BTN_PRIMARY =
   "inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm font-semibold text-accent-fg bg-accent transition-colors hover:bg-accent-hover active:bg-accent-pressed disabled:cursor-not-allowed disabled:opacity-50";
 const BTN_SUBTLE =
   "inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm font-semibold text-text-secondary bg-transparent transition-colors hover:bg-surface-alt hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
-const BTN_STD =
-  "inline-flex h-8 items-center gap-1.5 rounded border border-border-strong bg-surface px-3 text-sm font-semibold text-foreground transition-colors hover:bg-surface-alt disabled:cursor-not-allowed disabled:opacity-50";
+// Input/select recipe for the Document popover (matches TableCard's FIELD).
 const FIELD =
-  "h-8 rounded border border-border-strong bg-surface px-2.5 text-sm text-foreground outline-none transition-colors focus:border-accent";
-const BADGE_CLS =
-  "rounded-sm bg-[color:color-mix(in_srgb,var(--muted)_14%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted";
-
-/** Fluent scope badge. */
-function ScopeBadge({ children }: { children: ReactNode }) {
-  return <span className={BADGE_CLS}>{children}</span>;
-}
+  "h-8 rounded border border-border-strong bg-surface px-2.5 text-sm text-foreground outline-none transition-colors hover:border-b-[color:var(--text-secondary)] focus:border-accent";
 
 export function PasteInput() {
   const [tables, setTables] = useState<TableState[]>([]);
@@ -76,9 +55,9 @@ export function PasteInput() {
   const [copyAllState, setCopyAllState] = useState<"idle" | "copied" | "error">(
     "idle",
   );
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [view, setView] = useState<"rendered" | "json">("rendered");
-  const [showStyles, setShowStyles] = useState(false);
+  // Whether the top-band "Document" (global body settings) popover is open.
+  const [showDoc, setShowDoc] = useState(false);
   const idRef = useRef(0);
 
   // Document body font (default Arial).
@@ -235,42 +214,6 @@ export function PasteInput() {
     [activeTable, titleLevel],
   );
 
-  async function copyForWord() {
-    if (
-      !activeTable ||
-      activeHtml === "" ||
-      typeof ClipboardItem === "undefined" ||
-      !navigator.clipboard?.write
-    ) {
-      setCopyState("error");
-      setTimeout(() => setCopyState("idle"), 2000);
-      return;
-    }
-    try {
-      const item = new ClipboardItem({
-        "text/html": new Blob([buildWordHtml(activeHtml, headingStyle, bodyFont)], {
-          type: "text/html",
-        }),
-        "text/plain": new Blob([htmlToPlainText(activeHtml)], {
-          type: "text/plain",
-        }),
-      });
-      await navigator.clipboard.write([item]);
-      setCopyState("copied");
-    } catch {
-      setCopyState("error");
-    }
-    setTimeout(() => setCopyState("idle"), 2000);
-  }
-
-  const maxDepth = Math.min(
-    9,
-    Math.max(
-      1,
-      ...tables.map((t) => t.pivotLevels.length + (t.sectionTitle.trim() ? 1 : 0)),
-    ),
-  );
-
   const pasteZone = (big: boolean) => (
     <div
       tabIndex={0}
@@ -344,17 +287,69 @@ export function PasteInput() {
           <span className="text-xs text-muted">
             {tables.length} of {MAX_TABLES} sections
           </span>
-          <span className="mx-1 h-6 w-px bg-border" />
-          <button
-            type="button"
-            onClick={() => setShowStyles((v) => !v)}
-            aria-expanded={showStyles}
-            className={BTN_SUBTLE}
-          >
-            {showStyles ? "▾" : "▸"} Level styles &amp; document
-          </button>
-          <ScopeBadge>All tables</ScopeBadge>
           <div className="ml-auto flex items-center gap-2">
+            {/* ⚙ Document — GLOBAL body settings (all tables): body font, indent per
+                nesting level, and reset-levels. Owned here (PasteInput holds the
+                state), opened from a shared Popover. */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowDoc((v) => !v)}
+                aria-expanded={showDoc}
+                aria-label="Document body settings (all tables)"
+                title="Body font, indent, and reset — applied to every section"
+                className={BTN_SUBTLE}
+              >
+                &#9881; Document
+              </button>
+              <Popover open={showDoc} onClose={() => setShowDoc(false)}>
+                <div className="flex w-60 flex-col gap-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    Document
+                    <span className="ml-1.5 rounded-sm bg-accent-subtle px-1 text-[10px] font-semibold normal-case text-accent-text">
+                      All tables
+                    </span>
+                  </div>
+                  <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
+                    Body font
+                    <select
+                      value={bodyFont}
+                      onChange={(e) => setBodyFont(e.target.value)}
+                      aria-label="Document body font"
+                      className={FIELD}
+                    >
+                      {FONTS.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
+                    Indent/level (in)
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={indentInput}
+                      onChange={(e) =>
+                        setIndentInput(e.target.value.replace(/[^0-9.]/g, ""))
+                      }
+                      aria-label="Indent per nesting level, in inches"
+                      className={`${FIELD} w-16`}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setLevelStyles([])}
+                    disabled={levelStyles.length === 0}
+                    title="Reset every level to the default look"
+                    className="h-8 rounded border border-border-strong bg-surface px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent hover:text-accent-text disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    Reset levels
+                  </button>
+                </div>
+              </Popover>
+            </div>
             <button
               type="button"
               onClick={clearAll}
@@ -379,121 +374,6 @@ export function PasteInput() {
           </div>
         </div>
 
-        {showStyles && (
-          <div className="flex flex-col gap-3 border-t border-border px-4 py-3 text-sm text-text-secondary">
-            <p className="text-xs text-muted">
-              These style the <strong>nested body rows</strong> and the document,
-              and apply to every table. (The title is styled in its own{" "}
-              <strong>Section Header</strong> group.)
-            </p>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <label className="flex items-center gap-1.5">
-                Body font
-                <select
-                  value={bodyFont}
-                  onChange={(e) => setBodyFont(e.target.value)}
-                  className={FIELD}
-                >
-                  {HEADING_FONTS.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-1.5">
-                Indent/level (in)
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={indentInput}
-                  onChange={(e) =>
-                    setIndentInput(e.target.value.replace(/[^0-9.]/g, ""))
-                  }
-                  aria-label="Indent per nesting level, in inches"
-                  className={`${FIELD} w-14`}
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => setLevelStyles([])}
-                disabled={levelStyles.length === 0}
-                title="Reset every level to the default look"
-                className={BTN_STD}
-              >
-                Reset levels
-              </button>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-                Level styles{" "}
-                <span className="font-normal normal-case">
-                  (nested body rows, by depth)
-                </span>
-              </span>
-              {Array.from({ length: maxDepth }, (_, i) => {
-                const lv = headingStyle.levels[i];
-                return (
-                  <div
-                    key={i}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1.5"
-                  >
-                    <span className="w-14 text-text-secondary">Level {i + 1}</span>
-                    <label className="flex items-center gap-1.5">
-                      Color
-                      <input
-                        type="color"
-                        value={lv.color}
-                        onChange={(e) => setLevel(i, { color: e.target.value })}
-                        aria-label={`Level ${i + 1} color`}
-                        className="h-7 w-8 cursor-pointer rounded border border-border-strong"
-                      />
-                    </label>
-                    <label className="flex items-center gap-1.5">
-                      Font
-                      <select
-                        value={lv.font}
-                        onChange={(e) => setLevel(i, { font: e.target.value })}
-                        aria-label={`Level ${i + 1} font`}
-                        className={FIELD}
-                      >
-                        {HEADING_FONTS.map((f) => (
-                          <option key={f} value={f}>
-                            {f}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="flex items-center gap-1.5">
-                      pt
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={levelStyles[i]?.sizeInput ?? DEFAULT_LEVEL.sizeInput}
-                        onChange={(e) =>
-                          setLevel(i, {
-                            sizeInput: e.target.value.replace(/[^0-9]/g, ""),
-                          })
-                        }
-                        aria-label={`Level ${i + 1} size in points`}
-                        className={`${FIELD} w-12`}
-                      />
-                    </label>
-                    <label className="flex items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={lv.bold}
-                        onChange={(e) => setLevel(i, { bold: e.target.checked })}
-                        className="accent-[var(--accent)]"
-                      />
-                      Bold
-                    </label>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </header>
 
       {errorBanner && <div className="px-4 pt-3">{errorBanner}</div>}
@@ -562,6 +442,10 @@ export function PasteInput() {
               onHeadingStyleChange={setHeadingStyleName}
               title={titleInput}
               onTitleChange={setTitle}
+              appearance={{
+                levelStyles,
+                onLevelChange: setLevel,
+              }}
             />
           ) : (
             <>
@@ -616,20 +500,6 @@ export function PasteInput() {
                 JSON
               </button>
             </div>
-            <ScopeBadge>This table</ScopeBadge>
-            <button
-              type="button"
-              onClick={copyForWord}
-              disabled={activeHtml === ""}
-              title="Copies this table's HTML to paste into Word. Paste with 'Use Destination Styles' so the title maps to your heading."
-              className={`ml-auto ${BTN_PRIMARY}`}
-            >
-              {copyState === "copied"
-                ? "Copied!"
-                : copyState === "error"
-                  ? "Copy failed"
-                  : "Copy for Word"}
-            </button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {view === "json" ? (

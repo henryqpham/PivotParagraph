@@ -103,7 +103,8 @@ export function defaultMarker(depth: number): MarkerKind {
 
 /**
  * Per-table multilevel-numbering config (app-drawn STATIC numbers, not Word's).
- * - `mode: "off"` -- no numbering; the per-level `markers` show instead.
+ * - `mode: "off"` -- no markers and no numbers; body rows are plain.
+ * - `mode: "custom"` -- each level shows its own chosen `markers` symbol.
  * - `mode: "multilevel"` -- the renderer prefixes each node's first line with a
  *   compounded number path (`5`, `5.1`, `5.1.1`, ...) as plain escaped body text,
  *   and suppresses that node's marker. The numbers are real text in the preview
@@ -123,14 +124,15 @@ export function defaultMarker(depth: number): MarkerKind {
  * levels and leave detail levels (e.g. Rationale / Notes) unnumbered.
  */
 export type NumberingConfig = {
-  mode: "off" | "multilevel";
+  mode: "off" | "custom" | "multilevel";
   start: string;
   levels: boolean[];
 };
 
-/** The default (off) numbering config; shared by the renderer and TableState. */
+/** The default numbering config (per-level custom markers); shared by the
+ *  renderer and TableState. */
 export const DEFAULT_NUMBERING: NumberingConfig = {
-  mode: "off",
+  mode: "custom",
   start: "1",
   levels: [],
 };
@@ -290,9 +292,10 @@ export function renderPivotTree(
     const isHeading = headingLevels[depth - 1] === true;
     const headingK = Math.min(titleLevel + depth, 9);
     list.forEach((node, i) => {
-      // Markers render only when numbering is off; a numbered node shows its
-      // precomputed number instead (and a hidden-level node shows neither).
-      const m = numbered ? "" : markerText(kind, i);
+      // Markers render only in "custom" mode (each level's chosen symbol); a
+      // multilevel node shows its precomputed number instead, and "off" shows
+      // neither.
+      const m = numbering.mode === "custom" ? markerText(kind, i) : "";
       const num = numberOf?.get(node) ?? "";
       node.lines.forEach((line, j) => {
         const lf = fieldLabels[line.col] ?? DEFAULT_FIELD_LABEL;

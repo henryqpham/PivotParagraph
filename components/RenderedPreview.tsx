@@ -9,6 +9,13 @@ import type { HeadingStyle } from "@/lib/clipboard";
  * constant `style` attributes -- no user value lands in an attribute, so there is
  * no injection surface.
  *
+ * Two modes:
+ * - a single `html` string (the ACTIVE section, for focused editing), or
+ * - a `sections` array (the "All sections" view). Each section is rendered on its
+ *   own "paper" page so the user sees page breaks, but the CONTENT is exactly the
+ *   per-table fragments that `Copy all` concatenates -- so the preview and the
+ *   export can never diverge (stacking papers === joining the same strings).
+ *
  * Tailwind v4 preflight strips heading sizes. We restore spacing with
  * arbitrary-descendant variants, and the heading look (color/font/size/weight)
  * from a scoped `<style>` so the preview matches what a "Copy all" +
@@ -23,16 +30,28 @@ const previewClasses =
 
 export function RenderedPreview({
   html,
+  sections,
   emptyHint,
   headingStyle,
   bodyFont,
 }: {
-  html: string;
+  /** Single-section HTML (the active section). Ignored when `sections` is given. */
+  html?: string;
+  /** Per-section HTML fragments for the combined "All sections" view. */
+  sections?: string[];
   emptyHint?: string;
   headingStyle: HeadingStyle;
   bodyFont: string;
 }) {
-  if (html === "") {
+  // The papers to render: every non-empty section in combined mode, else the one
+  // active fragment. A section with no placed fields renders "" and is dropped.
+  const papers = sections
+    ? sections.filter((s) => s !== "")
+    : html
+      ? [html]
+      : [];
+
+  if (papers.length === 0) {
     return (
       <p className="text-sm text-foreground/60">
         {emptyHint ??
@@ -78,20 +97,30 @@ export function RenderedPreview({
     `.ws-preview [data-heading]{margin-left:0;font-weight:700}` +
     `.ws-preview [data-heading]::before{content:"# ";opacity:0.4;font-weight:400}`;
 
-  const hasHeadings = html.includes("data-heading");
+  const hasHeadings = papers.some((p) => p.includes("data-heading"));
 
   return (
     <div>
-      <div
-        aria-label="Rendered section preview"
-        className={previewClasses}
-        style={{ fontFamily: bodyFont }}
-      >
-        <style>{css}</style>
-        <div dangerouslySetInnerHTML={{ __html: html }} />
+      {/* One shared scoped stylesheet; the `.ws-preview` selectors apply to every
+          paper below (each carries the ws-preview class). */}
+      <style>{css}</style>
+      <div className="flex flex-col gap-4">
+        {papers.map((p, i) => (
+          <div
+            key={i}
+            aria-label={
+              sections
+                ? `Combined preview, section ${i + 1} of ${papers.length}`
+                : "Rendered section preview"
+            }
+            className={previewClasses}
+            style={{ fontFamily: bodyFont }}
+            dangerouslySetInnerHTML={{ __html: p }}
+          />
+        ))}
       </div>
       {hasHeadings && (
-        <p className="mt-1 text-xs text-muted">
+        <p className="mt-2 text-xs text-muted">
           <span className="opacity-40"># </span>= Word fills in the heading number
           (e.g. 5.1) on a <strong>Use Destination Styles</strong> paste; that row
           also appears in the Navigation pane and is collapsible.

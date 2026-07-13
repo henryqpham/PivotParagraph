@@ -8,7 +8,7 @@ Wide Excel tables don't fit an 8.5" x 11" Word page — columns bleed off the ed
 
 ## Status
 
-**Working end to end:** paste → parse (SheetJS) → nest → render → live preview → **Copy all**. Paste several tables (managed in a left Sections rail), configure each table's pivot, style the levels once for all tables, and copy all sections at once. See the [roadmap](./docs/ROADMAP.md) for what's out of scope (`.docx`).
+**Working end to end:** paste → parse (SheetJS) → nest → render → live preview → **Copy all**. Paste several tables (managed in a left Sections rail, **reorderable** with ▲▼), configure each table's pivot, style the levels once for all tables, preview the whole stacked document (the **All sections** preview toggle), and copy all sections at once — with an inline confirmation that reminds you which Word paste option to choose. Your whole workspace **auto-saves in the browser** (local `localStorage`, nothing uploaded), so a refresh won't lose it, and **Remove section / Clear all are undoable**. No spreadsheet handy? The empty state has a **Try an example** button. See the [roadmap](./docs/ROADMAP.md) for what's out of scope (`.docx`).
 
 ## The pivot view
 
@@ -16,14 +16,14 @@ Add fields from the **Add fields** pool, then shape the **Structure**, an indent
 
 ## Multiple tables
 
-Paste table after table — each becomes a row in the left **Sections rail** (one edited at a time, cap 100), inside a 4-pane IDE layout: top global controls · left rail · center builder · pinned right live preview. The shared body styling is reached right in the per-level matrix's **Look** column (a color swatch + a font / size / bold popover per depth), with only the document-wide **Body font**, **Indent/level**, and **Reset levels** in a compact **⚙ Document** popover in the top command band — all badged *All tables* so they apply to every section; each table keeps its own fields and title. Export every section at once with **Copy all**.
+Paste table after table — each becomes a row in the left **Sections rail** (one edited at a time, cap 100), inside a 4-pane IDE layout: top global controls · left rail · center builder · pinned right live preview. Reorder sections with the rail's **▲▼** (that's the order **Copy all** stacks them); the Preview tab's **This section / All sections** toggle switches between the section you're editing and the full stacked document. The shared body styling is reached right in the per-level matrix's **Look** column (a color swatch + a font / size / bold popover per depth), with only the document-wide **Body font**, **Indent/level**, and **Reset levels** in a compact **⚙ Document** popover in the top command band — all badged *All tables* so they apply to every section; each table keeps its own fields and title. Export every section at once with **Copy all**, then follow the inline paste-guidance banner in Word. The whole workspace is saved in your browser (locally, nothing uploaded), so closing the tab or refreshing won't lose it.
 
 ## Stack
 
 - Next.js 16 (App Router) + TypeScript
 - SheetJS (`xlsx`, official CDN tarball) for parsing
 - Tailwind CSS v4 — Microsoft **Fluent/Office** reskin (Teams-blue accent, Segoe UI)
-- Client-side only — no backend, no database, nothing uploaded or persisted.
+- Client-side only — no backend, no database, nothing uploaded. Your workspace is saved to the browser's local storage (on your machine only) so it survives a refresh.
 
 ## Getting started
 
@@ -42,7 +42,7 @@ The app ships a `Dockerfile` (Next.js standalone build, ~305 MB image) and a `do
 docker compose up --build
 ```
 
-Then open [http://localhost:3000](http://localhost:3000). Press **Ctrl/Cmd + C** in the terminal (or `docker compose down`) to stop. Everything runs client-side inside the container — nothing is uploaded or persisted.
+Then open [http://localhost:3000](http://localhost:3000). Press **Ctrl/Cmd + C** in the terminal (or `docker compose down`) to stop. Everything runs client-side in your browser — nothing is uploaded (the workspace is saved only in your browser's local storage).
 
 ## Docs
 
@@ -55,13 +55,15 @@ Then open [http://localhost:3000](http://localhost:3000). Press **Ctrl/Cmd + C**
 ```
 app/                 App Router pages (home renders the full-height app shell)
 components/
-  PasteInput.tsx     app shell (4-pane IDE): paste/append, tables[] + shared styles, left Sections rail, pinned preview (Preview/JSON tabs) + Copy all (all sections)
+  PasteInput.tsx     app shell (4-pane IDE): paste/append + paste-anywhere, tables[] + shared styles, localStorage persistence, undo, combined preview, Copy-all confirmation, pinned preview (Preview/JSON tabs, This-section/All-sections scope) + Copy all
+  SectionsRail.tsx   left Sections rail: select / reorder (▲▼) / remove per section
   TableCard.tsx      one table's center builder: Section Header group (title + heading dropdown + title look) + Levels group (structure + per-level controls)
-  tableModel.ts      TableState + tableToHtml (per-table nest->render) + bucket helpers (add/remove/indent/outdent/move/unusedColumns)
-  RenderedPreview.tsx renders the pivot HTML (live preview; ws-title + [data-level] CSS)
+  tableModel.ts      TableState + tableToHtml (per-table nest->render) + bucket helpers (add/remove/indent/outdent/move/unusedColumns) + newTable factory + makeExampleTable/EXAMPLE_GRID
+  RenderedPreview.tsx renders the pivot HTML (live preview; ws-title + [data-level] CSS); one paper (active) or many stacked papers (All sections)
   JsonPreview.tsx    shows the raw parsed Grid as JSON
   Popover.tsx        shared dependency-free popover (Document + Look popovers)
 lib/
+  persistence.ts     versioned localStorage save/load/clear for the workspace (local-only)
   types.ts           PivotNode/PivotLine + FieldLabel + raw Grid
   parser.ts          SheetJS clipboard -> Grid
   mapper.ts          rowsToPivotTree (Grid + indent buckets + sortDirs -> PivotNode[]; sort post-pass) + cellToString

@@ -188,6 +188,59 @@ export function moveField(levels: number[][], fi: number, dir: -1 | 1): number[]
 }
 
 /**
+ * Build a fresh, empty `TableState` for a pasted grid. The single source of the
+ * default per-table config, shared by the paste handler and the example loader so
+ * a new table always starts from the same shape (no fields placed, custom markers,
+ * no title).
+ */
+export function newTable(id: string, grid: Grid): TableState {
+  return {
+    id,
+    grid,
+    pivotLevels: [],
+    markers: [],
+    fieldLabels: {},
+    sortDirs: {},
+    breakAfter: [],
+    numbering: DEFAULT_NUMBERING,
+    headingLevels: [],
+    sectionTitle: "",
+  };
+}
+
+/**
+ * A small, deliberately WIDE demo grid (the shape the tool is built for): a few
+ * grouping columns plus detail columns that don't fit a Word page side-by-side.
+ * Used by the first-run "Try an example" button so a newcomer can see the
+ * wide-table → nested-outline transform in one click, without their own
+ * spreadsheet. Values are display strings (the parser returns strings).
+ */
+export const EXAMPLE_GRID: Grid = [
+  ["Region", "Country", "Product", "Units", "Revenue"],
+  ["Americas", "United States", "Laptops", "120", "$240,000"],
+  ["Americas", "United States", "Monitors", "90", "$90,000"],
+  ["Americas", "Canada", "Laptops", "60", "$120,000"],
+  ["EMEA", "Germany", "Laptops", "80", "$160,000"],
+  ["EMEA", "Germany", "Monitors", "50", "$50,000"],
+  ["EMEA", "France", "Tablets", "40", "$40,000"],
+  ["APAC", "Japan", "Laptops", "100", "$200,000"],
+  ["APAC", "Japan", "Tablets", "70", "$70,000"],
+];
+
+/**
+ * A ready-to-explore example section: the wide demo grid pre-arranged into a
+ * 3-level outline (Region → Country → Product), with Units/Revenue left in the
+ * Add-fields pool so the pool is non-empty and teaches the "add a field" step.
+ */
+export function makeExampleTable(id: string): TableState {
+  return {
+    ...newTable(id, EXAMPLE_GRID),
+    pivotLevels: [[0], [1], [2]],
+    sectionTitle: "Sales by Region",
+  };
+}
+
+/**
  * parse -> nest -> render for one table. The optional Section title maps to a
  * Word heading (in `buildWordHtml`); the body is always app-styled paragraphs.
  * Empty-guard first so a title never renders over nothing. Pure: the single source

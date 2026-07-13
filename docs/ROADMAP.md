@@ -21,6 +21,12 @@ The app is **pivot-only**: paste → nest → render → **Copy all**. It began 
 | **Shared per-level styling** | The per-depth nested-row look (color swatch + font/size/bold popover) is edited inline in the per-level matrix's **Look** column (global by depth, badged *All tables*), while only the document-wide **Body font**, **Indent/level**, and **Reset levels** sit in a compact **⚙ Document** popover in the top command band; a shared dependency-free `Popover` (`components/Popover.tsx`) backs both the Look and Document popovers. `PasteInput` owns the state, passes a slimmed `appearance` prop (`{ levelStyles, onLevelChange }`) → `HeadingStyle = { levels: LevelStyle[] }` (per-depth look, color/font/size/bold each, default all the same) + one Body font + indent step, and drives body font / indent / reset itself; `LevelInput`/`DEFAULT_LEVEL` in `tableModel.ts`, `FONTS` exported from `TableCard` | Done |
 | **Combined export** | **Copy all** — every table as one Word doc | Done |
 | **Malformed-paste handling** | Graceful empty/parse-error states | Done |
+| **Session persistence** | The whole workspace (every `TableState` + shared styling) auto-saves to `localStorage` (versioned key, [`lib/persistence.ts`](../lib/persistence.ts)) — debounced + flushed on tab-hide, rehydrated on mount (id counter re-seeded). Local-only; nothing uploaded | Done |
+| **Combined “All sections” preview** | The Preview tab’s **This section / All sections** toggle renders every section stacked on its own paper, from the same `tableToHtml` fragments `Copy all` concatenates (so preview and export can’t diverge); `RenderedPreview` takes `sections?: string[]` | Done |
+| **Copy-all confirmation** | After `Copy all`, a visible + `aria-live` banner reports the real contributing-section count and the decisive Word paste step (**Keep Source Formatting** vs **Use Destination Styles**, the latter only when a heading is mapped); friendly failure + “add fields first” states | Done |
+| **Reorder sections** | Per-row **▲▼** in the Sections rail ([`components/SectionsRail.tsx`](../components/SectionsRail.tsx)) swap neighbours in `tables[]`; rail order = the order `Copy all` stacks them | Done |
+| **Undo / safe delete** | **Remove section** and **Clear all** stash a snapshot and offer a transient **Undo** (focus-grabbing); **Clear all** is a two-step inline confirm | Done |
+| **First-run activation** | Onboarding empty state (value prop + 1-2-3 steps + **Try an example** → `makeExampleTable`) and **paste-anywhere** (a window `paste` listener ingests a copied table unless a text field is focused, so the paste zone no longer needs focus) | Done |
 
 ## Removed (was built, then cut to focus on pivot)
 
@@ -29,6 +35,8 @@ The app is **pivot-only**: paste → nest → render → **Copy all**. It began 
 
 ## Possible next steps
 
+- **Drag-and-drop** — native HTML5 DnD for arranging fields in the Structure list and reordering sections in the rail (the ▲▼ buttons ship now and stay as the keyboard path); deferred as its own round for the drop-between-vs-into fiddliness + a11y parity.
+- **Duplicate a section** — clone a configured `TableState` for same-shape tables (one per region/quarter).
 - **Pivot aggregation** — counts/sums per group (e.g. `Brazil (3)` or a totals summary).
 - **Per-table heading styling** — currently styling is global; per-table would need per-instance class scoping or inline styles.
 - **`.docx` export** (currently out of scope).

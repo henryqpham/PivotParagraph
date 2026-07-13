@@ -13,6 +13,7 @@ import {
   outdentField,
   removeField,
   unusedColumns,
+  bodyGrid,
   DEFAULT_LEVEL,
   MAX_LEVELS,
   type LevelInput,
@@ -178,7 +179,7 @@ function TableCardInner({
   // to need one (a wide spreadsheet can have dozens of columns).
   const [fieldFilter, setFieldFilter] = useState("");
 
-  const { grid, pivotLevels } = table;
+  const { pivotLevels } = table;
   // A body bucket's GLOBAL level-style slot = its indent depth, +1 when a Section
   // title sits above it (mirrors the renderer's walk(nodes, 2, 1)); clamp to the
   // 9-entry chart. Keeps each matrix "Look" cell driving the same data-level the
@@ -186,10 +187,12 @@ function TableCardInner({
   const titleOffset = table.sectionTitle.trim() ? 1 : 0;
   const levelIdxForBucket = (b: number) => Math.min(8, b + titleOffset);
 
-  const headers = useMemo(
-    () => (grid[0] ? grid[0].map((c) => (c == null ? "" : String(c))) : []),
-    [grid],
-  );
+  // Field names come from the EFFECTIVE header row (bodyGrid honors a header offset
+  // set in the Table view), so skipping banner rows renames the fields everywhere.
+  const headers = useMemo(() => {
+    const bg = bodyGrid(table);
+    return bg[0] ? bg[0].map((c) => (c == null ? "" : String(c))) : [];
+  }, [table]);
 
   const unused = useMemo(
     () => unusedColumns(headers.length, pivotLevels),
@@ -668,6 +671,19 @@ function TableCardInner({
                       className="accent-[var(--accent)]"
                     />
                     Blank line between top-level groups
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={table.pageBreakBefore === true}
+                      onChange={(e) =>
+                        onChange({ pageBreakBefore: e.target.checked })
+                      }
+                      aria-label="Start each top-level group on a new Word page"
+                      title="Insert a Word page break before each top-level group (this section)"
+                      className="accent-[var(--accent)]"
+                    />
+                    New page per group
                   </label>
                 </div>
               </>

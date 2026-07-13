@@ -87,9 +87,14 @@ export function RenderedPreview({
     ).join("") +
     `.ws-preview [data-heading]{margin-left:0;font-weight:700}` +
     `.ws-preview [data-heading]::before{content:"# ";opacity:0.4;font-weight:400}` +
+    // A page-break row: a dashed rule + generous space above it stands in for the
+    // Word page boundary the paste will insert before this top-level group.
+    `.ws-preview [data-break]{margin-top:22px;border-top:1px dashed #b0b0b0;padding-top:16px}` +
     (titleMapped
       ? `.ws-preview .ws-title::before{content:"# ";opacity:0.4;font-weight:400}`
       : "");
+
+  const hasBreaks = html.includes(' data-break="1"');
 
   // Show the heading footnote whenever a "# " placeholder is visible: a body row
   // mapped to a Word heading, OR a title that is itself mapped to a heading. Match
@@ -117,6 +122,12 @@ export function RenderedPreview({
           <strong>ALL-CAPS</strong> even though the preview shows normal case. For a
           preview that matches Word exactly, use <strong>Multilevel numbers</strong>{" "}
           instead of a Word heading (the app draws the numbers itself).
+        </p>
+      )}
+      {hasBreaks && (
+        <p className="mt-2 text-xs text-muted">
+          The dashed rule marks a <strong>Word page break</strong> — each top-level
+          group starts on a new page when you paste.
         </p>
       )}
     </div>

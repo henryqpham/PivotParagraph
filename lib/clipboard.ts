@@ -219,20 +219,33 @@ export function buildWordHtml(
     // Nested rows. A `data-heading="K"` line is a level mapped to a Word heading:
     // map it to the destination "Heading K" style so a Use-Destination-Styles paste
     // adds it to the outline (nav + collapsible) and Word supplies its number.
-    // Otherwise the app's per-level look, inline (+ <b> when bold). One regex with
-    // an optional heading group so the two paths never double-match; the spacer
+    // Otherwise the app's per-level look, inline (+ <b> when bold). An optional
+    // `data-break` attribute (a top-level group starting a new page) adds
+    // `page-break-before:always` to whichever paragraph it lands on; the spacer
     // paragraph (nbsp, data-level only) passes through the else branch as an
     // ordinary inline body paragraph.
     .replace(
-      /<p class="ws-lvl" data-level="([1-9])"(?: data-heading="([1-9])")?>([\s\S]*?)<\/p>/g,
-      (_m, d: string, h: string | undefined, content: string) => {
+      /<p class="ws-lvl" data-level="([1-9])"( data-break="1")?(?: data-heading="([1-9])")?>([\s\S]*?)<\/p>/g,
+      (
+        _m,
+        d: string,
+        brk: string | undefined,
+        h: string | undefined,
+        content: string,
+      ) => {
+        const pageBreak = brk ? "page-break-before:always" : "";
         if (h) {
           const k = Number(h);
           bodyHeadings.add(k);
-          return `<p class="MsoHeading${k}">${content}</p>`;
+          // A mapped heading keeps its class/mso rule; the page break is added as
+          // inline direct formatting (survives a Use-Destination-Styles paste).
+          const style = pageBreak ? ` style="${pageBreak}"` : "";
+          return `<p class="MsoHeading${k}"${style}>${content}</p>`;
         }
         const i = Number(d) - 1;
-        return `<p style="${directStyle(i, Number(d))}">${wrapBold(i, content)}</p>`;
+        const base = directStyle(i, Number(d));
+        const style = pageBreak ? `${base};${pageBreak}` : base;
+        return `<p style="${style}">${wrapBold(i, content)}</p>`;
       },
     );
 

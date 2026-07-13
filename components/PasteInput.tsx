@@ -21,6 +21,7 @@ import {
   newTable,
   makeExampleTable,
   estimateSectionStats,
+  dropEmptyColumns,
   DEFAULT_LEVEL,
   type LevelInput,
   type TableState,
@@ -62,11 +63,27 @@ type CopyNote =
   | { status: "empty" }
   | { status: "error" };
 
-/** One undo snapshot for a destructive action (remove / clear all / import). */
-type UndoState = { label: string; tables: TableState[]; activeId: string | null };
-// How many consecutive destructive actions the undo stack remembers before the
-// oldest silently drops off — a generous cushion, not a hard promise of history.
-const MAX_UNDO_STACK = 10;
+// Full workspace undo/redo history. The oldest step silently drops once the cap is
+// hit; a burst of rapid edits (typing, dragging a color) coalesces into ONE step
+// via a short debounce so Ctrl+Z doesn't crawl character-by-character.
+const HISTORY_CAP = 100;
+const HISTORY_DEBOUNCE = 300;
+
+// A history-worthy change = any workspace field EXCEPT pure section selection
+// (`activeId`). Fields are compared by reference — every state update replaces the
+// changed slice with a new object, so `!==` is an exact "did this actually change"
+// test. Selecting a different tab shouldn't create an undo step, but the snapshot
+// still carries activeId so undo restores the right focus.
+function historyChanged(a: SessionSnapshot, b: SessionSnapshot): boolean {
+  return (
+    a.tables !== b.tables ||
+    a.levelStyles !== b.levelStyles ||
+    a.bodyFont !== b.bodyFont ||
+    a.indentInput !== b.indentInput ||
+    a.headingStyleName !== b.headingStyleName ||
+    a.titleInput !== b.titleInput
+  );
+}
 
 // ---- Fluent control recipes -----------------------------------------------
 const BTN_PRIMARY =
@@ -92,15 +109,30 @@ export function PasteInput() {
   const [copyNote, setCopyNote] = useState<CopyNote | null>(null);
   // Two-step guard on the destructive "Clear all".
   const [confirmClear, setConfirmClear] = useState(false);
-  // Multi-step undo/redo stacks for destructive actions (remove / clear / import),
-  // most recent last — the classic two-stack model: undoing pops undoStack and
-  // pushes the replaced state onto redoStack (and vice versa for redo), so you can
-  // freely step back and forth. No auto-expiry — they persist until the next edit
-  // (noteEdit clears both, since every entry is a full-state snapshot that an
-  // intervening edit would invalidate) or a NEW destructive action (which also
-  // drops any pending redo — you've branched away from that future).
-  const [undoStack, setUndoStack] = useState<UndoState[]>([]);
-  const [redoStack, setRedoStack] = useState<UndoState[]>([]);
+  // Full workspace undo/redo history (session-only, never persisted). Rather than
+  // instrumenting every mutation, we OBSERVE the `snapshot` memo — which already
+  // captures the whole workspace — and record a step whenever it meaningfully
+  // changes. Held in a ref for race-free synchronous mutation across the debounce +
+  // apply flow (`syncUndoAvail` mirrors availability into state for the buttons).
+  // `past`/`future` are the classic two stacks;
+  // `present` is the last-committed snapshot; `pending` is a pre-burst baseline
+  // waiting for the debounce to commit.
+  const historyRef = useRef<{
+    past: SessionSnapshot[];
+    present: SessionSnapshot | null;
+    future: SessionSnapshot[];
+  }>({ past: [], present: null, future: [] });
+  const pendingRef = useRef<SessionSnapshot | null>(null);
+  // Suppress recording while WE apply a snapshot (undo/redo/hydration), so those
+  // don't get re-recorded as fresh edits.
+  const applyingHistoryRef = useRef(false);
+  const recordTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The history lives in a ref (race-free synchronous mutation), but the toolbar
+  // buttons need reactive enabled-state — so we MIRROR "can undo / can redo" into
+  // state and refresh it (via syncUndoAvail, defined below) at every mutation.
+  // Reading the ref during render is disallowed here (react-hooks/refs); reading
+  // this state is fine.
+  const [undoAvail, setUndoAvail] = useState({ canUndo: false, canRedo: false });
   // Gate persistence writes until after the initial localStorage load, so we never
   // clobber saved work with the empty initial state.
   const [hydrated, setHydrated] = useState(false);
@@ -163,6 +195,9 @@ export function PasteInput() {
       typeof data === "object" &&
       Array.isArray((data as SessionSnapshot).tables)
     ) {
+      // Restoring saved work is not an undoable "edit" — suppress recording so the
+      // history doesn't start with an "undo back to empty" step.
+      applyingHistoryRef.current = true;
       applySnapshot(data as SessionSnapshot);
     }
     hydratedRef.current = true;
@@ -232,6 +267,67 @@ export function PasteInput() {
     };
   }, []);
 
+  // ---- Undo/redo history: observe `snapshot`, record one step per meaningful
+  //      change, coalescing rapid bursts via a short debounce. ------------------
+  // Recompute the mirrored can-undo/can-redo state from the ref. Called (never in
+  // render) at every history mutation so the toolbar buttons stay live.
+  const syncUndoAvail = useCallback(() => {
+    const h = historyRef.current;
+    setUndoAvail({
+      canUndo: h.past.length > 0 || pendingRef.current !== null,
+      canRedo: h.future.length > 0,
+    });
+  }, []);
+
+  // Commit the pending pre-burst baseline into `past` (clearing any redo future).
+  const commitPending = useCallback(() => {
+    if (recordTimer.current) {
+      clearTimeout(recordTimer.current);
+      recordTimer.current = null;
+    }
+    const before = pendingRef.current;
+    if (before === null) return;
+    pendingRef.current = null;
+    const h = historyRef.current;
+    h.past = [...h.past.slice(-(HISTORY_CAP - 1)), before];
+    h.future = [];
+    h.present = snapshotRef.current;
+    syncUndoAvail();
+  }, [syncUndoAvail]);
+
+  useEffect(() => {
+    const h = historyRef.current;
+    if (!hydrated) {
+      h.present = snapshot;
+      return;
+    }
+    if (applyingHistoryRef.current) {
+      // This change came from applying an undo/redo (or hydration): adopt it as the
+      // new baseline, but don't log it as a fresh edit.
+      applyingHistoryRef.current = false;
+      h.present = snapshot;
+      return;
+    }
+    if (h.present === null) {
+      h.present = snapshot;
+      return;
+    }
+    if (!historyChanged(h.present, snapshot)) {
+      // Selection-only (activeId) change: keep the baseline current so a later real
+      // edit records the right pre-edit state, but don't create an undo step.
+      if (pendingRef.current === null) h.present = snapshot;
+      return;
+    }
+    // A real edit: capture the pre-burst baseline once, then (re)arm the debounce so
+    // a rapid burst (typing, dragging a color) commits as a single step.
+    if (pendingRef.current === null) {
+      pendingRef.current = h.present;
+      syncUndoAvail(); // enable Undo immediately, before the commit fires
+    }
+    if (recordTimer.current) clearTimeout(recordTimer.current);
+    recordTimer.current = setTimeout(commitPending, HISTORY_DEBOUNCE);
+  }, [hydrated, snapshot, commitPending, syncUndoAvail]);
+
   // Clear the copy confirmation + any pending clear-confirm when the user edits.
   // Called from the mutation handlers (an event-time call, NOT an effect) so the
   // note reads as "…until you change something" without a cascading render.
@@ -241,12 +337,8 @@ export function PasteInput() {
     // A stale paste-error banner is no longer relevant once the user does anything
     // else, so clear it here too (mirrors how the copy note is cleared on edit).
     setError(null);
-    // Every undo/redo entry is a FULL-STATE snapshot from before one action. The
-    // moment the user edits anything else, an older entry would revert (or
-    // re-apply) that edit too if popped — so any edit drops BOTH stacks, not just
-    // the top of one.
-    setUndoStack([]);
-    setRedoStack([]);
+    // NOTE: undo/redo history is NOT touched here — it's driven by the snapshot
+    // observer below, so ordinary edits ADD to history rather than clearing it.
   }
 
   // The pending "Clear all?" confirm auto-cancels if left untouched.
@@ -334,7 +426,9 @@ export function PasteInput() {
     }
     noteEdit();
     const id = `t${++idRef.current}`;
-    setTables((prev) => [...prev, newTable(id, grid)]);
+    // Strip fully-empty spacer/padding columns on the way in so they never clutter
+    // the Add-fields pool (automatic, no UI).
+    setTables((prev) => [...prev, newTable(id, dropEmptyColumns(grid))]);
     setActiveId(id);
     setError(null);
     setStatus(`Added section ${tables.length + 1}.`);
@@ -424,56 +518,46 @@ export function PasteInput() {
     });
   }
 
-  function pushUndo(label: string) {
-    // Cap the stack so a long burst of removes can't grow it unboundedly; the
-    // oldest entry silently drops once the cap is hit. A NEW destructive action
-    // also drops any pending redo — you've branched away from that future.
-    setUndoStack((stack) => [
-      ...stack.slice(-(MAX_UNDO_STACK - 1)),
-      { label, tables, activeId },
-    ]);
-    setRedoStack([]);
-  }
-
-  // Pop the most recent undo entry and restore it — but first push the CURRENT
-  // (about-to-be-replaced) state onto redoStack under the SAME label, so Redo can
-  // step forward again. Leaves the rest of undoStack intact so several destructive
-  // actions done back-to-back (no edit in between) can each be undone in turn.
+  // Undo: first FLUSH any in-flight edit (so a Ctrl+Z within the debounce window
+  // still reverts the change you just made), then pop `past` → restore it, pushing
+  // the state being replaced onto `future` so Redo can step forward. All history
+  // mutation is synchronous on the ref; applySnapshot drives the actual state, and
+  // applyingHistoryRef stops that from being re-recorded as a new edit.
   function doUndo() {
-    if (undoStack.length === 0) return;
-    const last = undoStack[undoStack.length - 1];
-    setRedoStack((stack) => [
-      ...stack.slice(-(MAX_UNDO_STACK - 1)),
-      { label: last.label, tables, activeId },
-    ]);
+    commitPending();
+    const h = historyRef.current;
+    if (h.past.length === 0) return;
+    const prev = h.past[h.past.length - 1];
+    h.past = h.past.slice(0, -1);
+    if (h.present) h.future = [...h.future.slice(-(HISTORY_CAP - 1)), h.present];
+    h.present = prev;
+    applyingHistoryRef.current = true;
     setCopyNote(null);
-    setTables(last.tables);
-    setActiveId(last.activeId);
-    setUndoStack((stack) => stack.slice(0, -1));
-    setStatus(`Undid: ${last.label}.`);
+    applySnapshot(prev);
+    syncUndoAvail();
+    setStatus("Undid the last change.");
   }
 
-  // The mirror image of doUndo: pop the most recent redo entry, push the current
-  // state back onto undoStack, and apply it.
+  // The mirror image of doUndo.
   function doRedo() {
-    if (redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
-    setUndoStack((stack) => [
-      ...stack.slice(-(MAX_UNDO_STACK - 1)),
-      { label: next.label, tables, activeId },
-    ]);
+    commitPending();
+    const h = historyRef.current;
+    if (h.future.length === 0) return;
+    const next = h.future[h.future.length - 1];
+    h.future = h.future.slice(0, -1);
+    if (h.present) h.past = [...h.past.slice(-(HISTORY_CAP - 1)), h.present];
+    h.present = next;
+    applyingHistoryRef.current = true;
     setCopyNote(null);
-    setTables(next.tables);
-    setActiveId(next.activeId);
-    setRedoStack((stack) => stack.slice(0, -1));
-    setStatus(`Redid: ${next.label}.`);
+    applySnapshot(next);
+    syncUndoAvail();
+    setStatus("Redid the change.");
   }
 
   // Ctrl/Cmd+Z (undo) and Ctrl+Y / Ctrl/Cmd+Shift+Z (redo) anywhere except inside a
   // text field (matching the paste-anywhere guard below). Kept in refs — same
   // reason as ingestRef below — so the mount-only listener never closes over a
-  // stale doUndo/doRedo (and the stacks they read) from the render it was attached
-  // in.
+  // stale doUndo/doRedo from the render it was attached in.
   const doUndoRef = useRef(doUndo);
   const doRedoRef = useRef(doRedo);
   useEffect(() => {
@@ -551,12 +635,13 @@ export function PasteInput() {
         setCopyNote(null);
         setError(null);
         setConfirmClear(false);
-        // The PRE-import state becomes undoable — deliberately NOT via noteEdit()
-        // (that would immediately clear the entry this push just added).
-        pushUndo("Workspace imported");
+        // Checkpoint any in-flight edit so the import is its own clean undo step;
+        // the observer then records the PRE-import state automatically (applySnapshot
+        // is a normal state change, NOT flagged as an undo/redo apply).
+        commitPending();
         applySnapshot(data as SessionSnapshot);
         setShowDoc(false);
-        setStatus("Workspace imported.");
+        setStatus("Workspace imported. Undo available (Ctrl+Z).");
       } catch {
         setError("Couldn't read that file as a workspace backup.");
       }
@@ -565,9 +650,38 @@ export function PasteInput() {
     reader.readAsText(file);
   }
 
+  // Deep-clone a section under a fresh id, inserted right after the original, and
+  // make the copy active. Serves the "several near-identical tables" workflow
+  // (same headers, different month/region). structuredClone handles the nested
+  // pivotLevels/fieldLabels/numbering so the copy shares no references.
+  function duplicateTable(id: string) {
+    if (tables.length >= MAX_TABLES) {
+      setError(
+        `Reached the ${MAX_TABLES}-section limit. Remove a section to add another.`,
+      );
+      return;
+    }
+    const src = tables.find((t) => t.id === id);
+    if (!src) return;
+    setCopyNote(null);
+    commitPending(); // clean undo step
+    const newId = `t${++idRef.current}`;
+    const clone: TableState = { ...structuredClone(src), id: newId };
+    setTables((ts) => {
+      const idx = ts.findIndex((t) => t.id === id);
+      const next = [...ts];
+      next.splice(idx + 1, 0, clone);
+      return next;
+    });
+    setActiveId(newId);
+    setStatus("Section duplicated.");
+  }
+
   function removeTable(id: string) {
     setCopyNote(null);
-    pushUndo("Section removed");
+    // Checkpoint any in-flight edit so this removal is its own clean undo step; the
+    // observer records the pre-removal state automatically.
+    commitPending();
     setActiveId((curr) => {
       if (curr !== id) return curr;
       const idx = tables.findIndex((t) => t.id === id);
@@ -576,15 +690,13 @@ export function PasteInput() {
       return remaining[Math.min(idx, remaining.length - 1)].id;
     });
     setTables((ts) => ts.filter((t) => t.id !== id));
-    // The undo/redo toolbar buttons are persistent (no more transient banner), so
-    // this announcement is now the only screen-reader signal that a removal
-    // happened — routed through the existing sr-only status region.
     setStatus("Section removed. Undo available (Ctrl+Z).");
   }
 
   function clearAll() {
     setCopyNote(null);
-    pushUndo("All sections cleared");
+    // Checkpoint any in-flight edit so the clear is its own undo step.
+    commitPending();
     setTables([]);
     setActiveId(null);
     setError(null);
@@ -794,6 +906,10 @@ export function PasteInput() {
       </div>
     ) : null;
 
+  // Read the mirrored availability state (kept in sync by syncUndoAvail at every
+  // history mutation) — NOT the ref, which can't be read during render.
+  const { canUndo, canRedo } = undoAvail;
+
   // ---- The Fluent 4-pane IDE (shown ALWAYS — even with no tables yet, so the
   //      full layout/outline is visible; the center shows the onboarding until
   //      you paste). ---------------------------------------------------------
@@ -811,22 +927,17 @@ export function PasteInput() {
           <span className="text-xs text-muted">
             {tables.length} of {MAX_TABLES} sections
           </span>
-          {/* Undo/Redo — persistent toolbar buttons (not a transient banner):
-              always present, disabled + greyed out when their stack is empty, with
-              the pending action's label in the tooltip. Kept on the LEFT, away from
-              the destructive/primary actions on the right, matching the
-              undo/redo-near-the-start convention most editors use. */}
+          {/* Undo/Redo — persistent toolbar buttons covering EVERY workspace change
+              (reorder, fonts, bold, indent, markers, title, add/remove, clear,
+              import). Disabled + greyed out when there's nothing to undo/redo. Kept
+              on the LEFT, away from the destructive/primary actions on the right. */}
           <div className="ml-2 flex items-center gap-0.5 border-l border-border pl-2">
             <button
               type="button"
               onClick={doUndo}
-              disabled={undoStack.length === 0}
+              disabled={!canUndo}
               aria-label="Undo"
-              title={
-                undoStack.length > 0
-                  ? `Undo: ${undoStack[undoStack.length - 1].label} (Ctrl+Z)`
-                  : "Nothing to undo"
-              }
+              title={canUndo ? "Undo (Ctrl+Z)" : "Nothing to undo"}
               className="grid h-8 w-8 place-items-center rounded text-base text-text-secondary transition-colors hover:bg-surface-alt hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
             >
               &#8630;
@@ -834,13 +945,9 @@ export function PasteInput() {
             <button
               type="button"
               onClick={doRedo}
-              disabled={redoStack.length === 0}
+              disabled={!canRedo}
               aria-label="Redo"
-              title={
-                redoStack.length > 0
-                  ? `Redo: ${redoStack[redoStack.length - 1].label} (Ctrl+Y)`
-                  : "Nothing to redo"
-              }
+              title={canRedo ? "Redo (Ctrl+Y)" : "Nothing to redo"}
               className="grid h-8 w-8 place-items-center rounded text-base text-text-secondary transition-colors hover:bg-surface-alt hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
             >
               &#8631;
@@ -1004,6 +1111,7 @@ export function PasteInput() {
           onSelect={setActiveId}
           onRemove={removeTable}
           onReorder={moveTable}
+          onDuplicate={duplicateTable}
         />
 
         {/* CENTER: onboarding (empty) or the two command groups */}
@@ -1126,7 +1234,13 @@ export function PasteInput() {
               )
             ) : view === "table" ? (
               activeTable ? (
-                <GridTable grid={activeTable.grid} />
+                <GridTable
+                  grid={activeTable.grid}
+                  headerRow={activeTable.headerRow ?? 0}
+                  onHeaderRowChange={(row) =>
+                    patchTable(activeTable.id, { headerRow: row })
+                  }
+                />
               ) : (
                 <p className="text-sm text-foreground/60">
                   Paste a table to see it here, exactly as it came from Excel.

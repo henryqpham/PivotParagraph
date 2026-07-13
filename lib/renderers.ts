@@ -274,6 +274,7 @@ export function renderPivotTree(
   numbering: NumberingConfig = DEFAULT_NUMBERING,
   headingLevels: boolean[] = [],
   titleLevel = 0,
+  pageBreakBefore = false,
 ): string {
   const numbered = numbering.mode === "multilevel";
   // Precompute each numbered node's display number (transparent hidden levels, top
@@ -327,8 +328,15 @@ export function renderPivotTree(
         // to the destination "Heading K" style.
         const headingAttr =
           j === 0 && isHeading ? ` data-heading="${headingK}"` : "";
+        // The FIRST line of each top-level group AFTER the first carries data-break
+        // when "page break before" is on → buildWordHtml turns it into a Word
+        // page-break-before. (depth 1 = the top-level groups, regardless of a title.)
+        const breakAttr =
+          j === 0 && pageBreakBefore && depth === 1 && i > 0
+            ? ` data-break="1"`
+            : "";
         blocks.push(
-          `<p class="ws-lvl" data-level="${lvl}"${headingAttr}>${prefix}${label}${value}</p>`,
+          `<p class="ws-lvl" data-level="${lvl}"${breakAttr}${headingAttr}>${prefix}${label}${value}</p>`,
         );
       });
       if (node.children.length > 0) walk(node.children, level + 1, depth + 1);

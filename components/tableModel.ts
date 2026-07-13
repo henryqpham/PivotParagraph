@@ -59,6 +59,19 @@ export type TableState = {
   headingLevels: boolean[];
   /** Optional title; the one Word heading, above the nested rows. */
   sectionTitle: string;
+  /**
+   * Which raw-grid row is the HEADER (0-based; default 0). Bumped when banner/title
+   * rows sit above the real header — everything downstream reads `bodyGrid(t)`
+   * (`grid.slice(headerRow)`) so those rows are ignored. Only drops leading ROWS,
+   * so every column-keyed structure (pivotLevels/fieldLabels/sortDirs) stays valid.
+   */
+  headerRow?: number;
+  /**
+   * "Start each top-level group on a new Word page" (per table, off by default).
+   * When on, the renderer marks each top-level group AFTER the first with
+   * `data-break`, which `buildWordHtml` turns into `page-break-before:always`.
+   */
+  pageBreakBefore?: boolean;
 };
 
 /**
@@ -212,6 +225,39 @@ export function moveField(levels: number[][], fi: number, dir: -1 | 1): number[]
 }
 
 /**
+ * Drop fully-empty columns from a freshly parsed grid — a column whose every cell
+ * (header included) is blank is a spacer/padding artifact that would otherwise
+ * clutter the Add-fields pool and merge as "(blank)" everywhere. Keeps column
+ * ORDER and runs at INGEST, before any bucket captures column indices. Returns the
+ * grid unchanged when nothing is empty, and never produces a 0-column grid.
+ */
+export function dropEmptyColumns(grid: Grid): Grid {
+  if (grid.length === 0) return grid;
+  const width = grid.reduce((m, r) => Math.max(m, r.length), 0);
+  const keep: number[] = [];
+  for (let c = 0; c < width; c++) {
+    const nonEmpty = grid.some((row) => {
+      const cell = row[c];
+      return cell != null && String(cell).trim() !== "";
+    });
+    if (nonEmpty) keep.push(c);
+  }
+  if (keep.length === width || keep.length === 0) return grid;
+  return grid.map((row) => keep.map((c) => row[c] ?? ""));
+}
+
+/**
+ * The grid with any header-offset rows removed (rows above `headerRow`), so its row
+ * 0 is the EFFECTIVE header. Read by the mapper, the builder's field list, and the
+ * page-count stat, so a header offset applies everywhere at once. Only drops leading
+ * ROWS — column indices (and thus pivotLevels/fieldLabels/sortDirs) stay valid.
+ */
+export function bodyGrid(t: TableState): Grid {
+  const hr = t.headerRow ?? 0;
+  return hr > 0 ? t.grid.slice(hr) : t.grid;
+}
+
+/**
  * Build a fresh, empty `TableState` for a pasted grid. The single source of the
  * default per-table config, shared by the paste handler and the example loader so
  * a new table always starts from the same shape (no fields placed, custom markers,
@@ -278,7 +324,7 @@ export function makeExampleTable(id: string): TableState {
  * `headingLevel(headingStyleName)`.
  */
 export function tableToHtml(t: TableState, titleLevel = 0): string {
-  const tree = rowsToPivotTree(t.grid, t.pivotLevels, t.sortDirs ?? {});
+  const tree = rowsToPivotTree(bodyGrid(t), t.pivotLevels, t.sortDirs ?? {});
   if (tree.length === 0) return "";
   return renderPivotTree(
     tree,
@@ -289,6 +335,7 @@ export function tableToHtml(t: TableState, titleLevel = 0): string {
     t.numbering ?? DEFAULT_NUMBERING,
     t.headingLevels ?? [],
     titleLevel,
+    t.pageBreakBefore ?? false,
   );
 }
 
@@ -310,15 +357,19 @@ const PAGE_BODY_HEIGHT_IN = 9;
 const ASSUMED_LINE_HEIGHT_IN = 0.2;
 
 export function estimateSectionStats(t: TableState, html: string): SectionStats {
-  const rows = Math.max(0, t.grid.length - 1); // data rows, excluding the header
+  const rows = Math.max(0, bodyGrid(t).length - 1); // data rows, excluding header
   const levels = t.pivotLevels.length;
   const paragraphs = html === "" ? 0 : (html.match(/<p /g) ?? []).length;
-  const pages =
+  let pages =
     paragraphs === 0
       ? 0
       : Math.max(
           1,
           Math.ceil((paragraphs * ASSUMED_LINE_HEIGHT_IN) / PAGE_BODY_HEIGHT_IN),
         );
+  // Each forced page break starts a fresh page, so the page count is at least the
+  // number of top-level groups (breaks + 1) when "page break before" is on.
+  const breaks = html === "" ? 0 : (html.match(/ data-break="1"/g) ?? []).length;
+  if (breaks > 0) pages = Math.max(pages, breaks + 1);
   return { rows, levels, pages };
 }

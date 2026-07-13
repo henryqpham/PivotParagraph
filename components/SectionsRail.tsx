@@ -16,6 +16,7 @@ export function SectionsRail({
   onSelect,
   onRemove,
   onReorder,
+  onDuplicate,
 }: {
   tables: TableState[];
   activeId: string | null;
@@ -23,6 +24,8 @@ export function SectionsRail({
   onRemove: (id: string) => void;
   /** Move the section at `from` to index `to` (drag-drop or keyboard). */
   onReorder: (from: number, to: number) => void;
+  /** Deep-clone this section right after itself. */
+  onDuplicate: (id: string) => void;
 }) {
   // The row currently being dragged, and the row it's hovered over (for the drop
   // indicator). Both are flat indices into `tables`, or null when idle.
@@ -167,6 +170,15 @@ export function SectionsRail({
                 title={label}
               >
                 {label}
+              </button>
+              <button
+                type="button"
+                onClick={() => onDuplicate(t.id)}
+                aria-label={`Duplicate ${label}`}
+                title="Duplicate this section"
+                className={`${rowBtn} hover:text-accent-text`}
+              >
+                &#10697;
               </button>
               <button
                 type="button"

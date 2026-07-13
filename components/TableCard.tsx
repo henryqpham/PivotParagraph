@@ -14,6 +14,7 @@ import {
   removeField,
   unusedColumns,
   DEFAULT_LEVEL,
+  MAX_LEVELS,
   type LevelInput,
   type TableState,
 } from "./tableModel";
@@ -333,16 +334,6 @@ function TableCardInner({
             />
             <span className={BADGE}>All tables</span>
           </div>
-          {headingStyleName !== "" && (
-            <p className="text-xs text-muted">
-              Mapped to <strong>{headingStyleName}</strong> — this section joins the
-              Word outline (Navigation pane) and Word supplies its heading{" "}
-              <strong>number</strong>. Your <strong>Look</strong> above
-              (font/size/color/<strong>B</strong>/<em>I</em>/
-              <span className="underline">U</span>) still applies on top. Note: if
-              the destination heading is ALL-CAPS, Word keeps the uppercase.
-            </p>
-          )}
         </div>
       </section>
 
@@ -378,7 +369,47 @@ function TableCardInner({
             {/* Structure */}
             {placed.length > 0 && (
               <>
-                <div className={SUB}>Structure</div>
+                <div className={`${SUB} flex items-center justify-between gap-2`}>
+                  <span>Structure</span>
+                  <span
+                    title="Word supports up to 9 indent levels"
+                    className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold normal-case tracking-normal ${
+                      pivotLevels.length > MAX_LEVELS
+                        ? "bg-[color:var(--danger-bg)] text-danger"
+                        : pivotLevels.length === MAX_LEVELS
+                          ? "bg-[color:color-mix(in_srgb,var(--warning)_16%,transparent)] text-[color:var(--warning)]"
+                          : "bg-[color:color-mix(in_srgb,var(--muted)_14%,transparent)] text-muted"
+                    }`}
+                  >
+                    {pivotLevels.length}/{MAX_LEVELS} levels
+                  </span>
+                </div>
+                {pivotLevels.length >= MAX_LEVELS && (
+                  <p
+                    role="status"
+                    className={`mb-1 flex items-start gap-1.5 rounded border px-2.5 py-1.5 text-[11px] leading-snug ${
+                      pivotLevels.length > MAX_LEVELS
+                        ? "border-[color:var(--danger-border)] bg-[color:var(--danger-bg)] text-danger"
+                        : "border-[color:color-mix(in_srgb,var(--warning)_35%,transparent)] bg-[color:color-mix(in_srgb,var(--warning)_10%,transparent)] text-[color:var(--warning)]"
+                    }`}
+                  >
+                    <span aria-hidden>&#9888;</span>
+                    {pivotLevels.length > MAX_LEVELS ? (
+                      <span>
+                        This section has <strong>{pivotLevels.length} levels</strong>,
+                        but Word (and this preview) show only <strong>9</strong> —
+                        levels 10+ collapse onto level 9. Outdent (&#9668;) or remove
+                        fields until you&apos;re at 9 or fewer.
+                      </span>
+                    ) : (
+                      <span>
+                        <strong>Maximum depth reached.</strong> Word supports 9 indent
+                        levels — new fields now stack at level 9 instead of nesting
+                        deeper.
+                      </span>
+                    )}
+                  </p>
+                )}
                 {/* gap-0 so the vertical tree guides stay continuous row-to-row */}
                 <div className="flex flex-col">
                   {placed.map(({ col, b, fi }) => {
@@ -802,16 +833,6 @@ function TableCardInner({
                     </div>
                   </div>
                 </div>
-                <p className="mt-1 text-[11px] text-muted">
-                  <strong>Marker · Heading</strong> apply to this section (Heading =
-                  Word Navigation pane).{" "}
-                  <span className="rounded-sm bg-accent-subtle px-1 text-accent-text">
-                    Look
-                  </span>{" "}
-                  (color + font/size/bold) is shared by depth across{" "}
-                  <strong>all tables</strong>. Body font &amp; indent live in the
-                  top-band <strong>Document</strong> button.
-                </p>
               </>
             )}
           </div>

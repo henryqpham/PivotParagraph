@@ -48,9 +48,9 @@ type SessionSnapshot = {
   activeId: string | null;
 };
 
-/** The post-copy confirmation shown near "Copy all" (and announced to a11y). */
+/** The post-copy confirmation shown near "Copy section" (and announced to a11y). */
 type CopyNote =
-  | { status: "ok"; count: number; hasHeading: boolean }
+  | { status: "ok"; hasHeading: boolean }
   | { status: "empty" }
   | { status: "error" };
 
@@ -71,13 +71,10 @@ export function PasteInput() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [copyAllState, setCopyAllState] = useState<"idle" | "copied" | "error">(
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
     "idle",
   );
   const [view, setView] = useState<"rendered" | "table" | "json">("rendered");
-  // Preview scope: the ACTIVE section (focused editing) or ALL sections stacked
-  // exactly as Copy all emits them (the actual deliverable).
-  const [previewScope, setPreviewScope] = useState<"active" | "all">("active");
   // Whether the top-band "Document" (global body settings) popover is open.
   const [showDoc, setShowDoc] = useState(false);
   // Post-copy confirmation + Word-paste guidance (persists until the next edit).
@@ -92,6 +89,7 @@ export function PasteInput() {
   const idRef = useRef(0);
   const undoBtnRef = useRef<HTMLButtonElement>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Latest snapshot + a hydration flag, kept in refs so the tab-hide flush can
   // save synchronously (from an event, without stale closure state) and never
   // overwrite saved work before the initial load has run.
@@ -207,6 +205,14 @@ export function PasteInput() {
   function noteEdit() {
     setCopyNote(null);
     setConfirmClear(false);
+    // A stale paste-error banner is no longer relevant once the user does anything
+    // else, so clear it here too (mirrors how the copy note is cleared on edit).
+    setError(null);
+    // The one-step undo only applies to the destructive action that created it.
+    // Once the user does anything else, drop it — otherwise clicking Undo later
+    // would blow away all the edits made in between (and that loss auto-persists).
+    setUndo(null);
+    if (undoTimer.current) clearTimeout(undoTimer.current);
   }
 
   // The pending "Clear all?" confirm auto-cancels if left untouched.
@@ -310,7 +316,11 @@ export function PasteInput() {
   function ingestClipboard(data: DataTransfer) {
     try {
       const rows = parseClipboard(data);
-      if (rows.length === 0) {
+      // Require at least two cells so a stray Ctrl/Cmd+V of ordinary text (which
+      // parses as a lone 1x1 cell) can't silently pollute the workspace with a junk
+      // section — a real table always has more than one cell.
+      const cells = rows.reduce((n, r) => n + r.length, 0);
+      if (cells < 2) {
         setError(
           "Couldn't read a table from the clipboard. Copy a cell range from Excel or Google Sheets, then paste here.",
         );
@@ -367,14 +377,21 @@ export function PasteInput() {
     setTables((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }
 
-  function reorderTable(id: string, dir: -1 | 1) {
+  // Move the section at `from` to index `to` (drag-drop reorder from the rail).
+  function moveTable(from: number, to: number) {
     noteEdit();
     setTables((ts) => {
-      const i = ts.findIndex((t) => t.id === id);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= ts.length) return ts;
+      if (
+        from < 0 ||
+        from >= ts.length ||
+        to < 0 ||
+        to >= ts.length ||
+        from === to
+      )
+        return ts;
       const next = [...ts];
-      [next[i], next[j]] = [next[j], next[i]];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
       return next;
     });
   }
@@ -416,53 +433,65 @@ export function PasteInput() {
     setConfirmClear(false);
   }
 
-  async function copyAll() {
+  // Flash the transient copy-button state, replacing any prior 2s reset timer so a
+  // rapid re-copy doesn't get its "Copied!" confirmation cut short by the earlier
+  // click's timer firing.
+  function flashCopyState(s: "copied" | "error") {
+    setCopyState(s);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopyState("idle"), 2000);
+  }
+
+  // Copy ONLY the active section — each section is its own standalone Word doc.
+  async function copySection() {
+    if (!activeTable) return;
     const titleLvl = headingLevel(headingStyleName);
-    const sectionHtmls = tables.map((t) => tableToHtml(t, titleLvl));
-    const contributing = sectionHtmls.filter((h) => h !== "").length;
-    if (contributing === 0) {
+    const html = tableToHtml(activeTable, titleLvl);
+    if (html === "") {
       setCopyNote({ status: "empty" });
       return;
     }
     if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
       setCopyNote({ status: "error" });
-      setCopyAllState("error");
-      setTimeout(() => setCopyAllState("idle"), 2000);
+      flashCopyState("error");
       return;
     }
-    const combined = sectionHtmls.join("\n");
     try {
       const item = new ClipboardItem({
-        "text/html": new Blob([buildWordHtml(combined, headingStyle, bodyFont)], {
+        "text/html": new Blob([buildWordHtml(html, headingStyle, bodyFont)], {
           type: "text/html",
         }),
-        "text/plain": new Blob([htmlToPlainText(combined)], {
+        "text/plain": new Blob([htmlToPlainText(html)], {
           type: "text/plain",
         }),
       });
       await navigator.clipboard.write([item]);
-      const hasHeading =
-        headingStyleName !== "" ||
-        tables.some((t) => (t.headingLevels ?? []).some(Boolean));
-      setCopyNote({ status: "ok", count: contributing, hasHeading });
-      setCopyAllState("copied");
+      // Only claim a Word-heading mapping when one is ACTUALLY emitted: the title
+      // maps to a heading only if a Heading style is chosen AND the title has text
+      // (a blank title renders no `ws-title`), and a body level maps only if it's
+      // both marked AND actually exists in the structure. Otherwise the "Use
+      // Destination Styles" guidance would be misleading (the dropdown defaults to
+      // "Heading 1", so a naive check is almost always true).
+      const titleIsHeading =
+        headingStyleName !== "" && activeTable.sectionTitle.trim() !== "";
+      const bodyHasHeading = (activeTable.headingLevels ?? []).some(
+        (h, i) => h && i < activeTable.pivotLevels.length,
+      );
+      setCopyNote({ status: "ok", hasHeading: titleIsHeading || bodyHasHeading });
+      flashCopyState("copied");
     } catch {
       setCopyNote({ status: "error" });
-      setCopyAllState("error");
+      flashCopyState("error");
     }
-    setTimeout(() => setCopyAllState("idle"), 2000);
   }
 
   const atLimit = tables.length >= MAX_TABLES;
   const activeTable = tables.find((t) => t.id === activeId) ?? tables[0] ?? null;
 
   const titleLevel = headingLevel(headingStyleName);
-  // Per-section fragments — the SINGLE source for both the combined preview and
-  // (recomputed identically in copyAll) the export, so the two can't drift.
-  const sectionHtmls = useMemo(
-    () => tables.map((t) => tableToHtml(t, titleLevel)),
-    [tables, titleLevel],
-  );
+  // The active section's rendered fragment — the single source for both the right-
+  // pane preview and (recomputed identically in copySection) the copy, so the two
+  // can't drift.
   const activeHtml = useMemo(
     () => (activeTable ? tableToHtml(activeTable, titleLevel) : ""),
     [activeTable, titleLevel],
@@ -542,14 +571,11 @@ export function PasteInput() {
           </span>
         ) : copyNote.status === "empty" ? (
           <span>
-            Nothing to copy yet — add fields to a section, then Copy all.
+            Nothing to copy yet — add fields to this section first.
           </span>
         ) : (
           <span>
-            <strong>
-              {copyNote.count} section{copyNote.count === 1 ? "" : "s"} copied.
-            </strong>{" "}
-            In Word, press{" "}
+            <strong>Section copied.</strong> In Word, press{" "}
             <kbd className="rounded border border-border-strong px-1 py-0.5 font-mono text-[11px]">
               Ctrl
             </kbd>
@@ -732,16 +758,16 @@ export function PasteInput() {
             )}
             <button
               type="button"
-              onClick={copyAll}
-              disabled={tables.length === 0}
-              title="Copies every section as one Word doc (stacked in paste order)."
+              onClick={copySection}
+              disabled={!activeTable}
+              title="Copies the active section as its own Word doc, ready to paste."
               className={BTN_PRIMARY}
             >
-              {copyAllState === "copied"
-                ? "Copied all!"
-                : copyAllState === "error"
+              {copyState === "copied"
+                ? "Copied!"
+                : copyState === "error"
                   ? "Copy failed"
-                  : "Copy all"}
+                  : "Copy section"}
             </button>
           </div>
         </div>
@@ -758,7 +784,7 @@ export function PasteInput() {
           activeId={activeTable?.id ?? null}
           onSelect={setActiveId}
           onRemove={removeTable}
-          onReorder={reorderTable}
+          onReorder={moveTable}
         />
 
         {/* CENTER: onboarding (empty) or the two command groups */}
@@ -777,7 +803,7 @@ export function PasteInput() {
                   {[
                     "Paste a wide Excel or Google Sheets table.",
                     "Arrange its columns into nested indent levels.",
-                    "Copy all → paste into Word.",
+                    "Copy section → paste into Word.",
                   ].map((step, i) => (
                     <li key={i} className="flex items-center gap-2.5">
                       <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent-subtle text-[11px] font-semibold text-accent-text">
@@ -853,37 +879,6 @@ export function PasteInput() {
                 </button>
               ))}
             </div>
-            {/* Scope toggle — only meaningful for the rendered preview with >1
-                section: focus on the active one, or see the full stacked doc. */}
-            {view === "rendered" && tables.length > 1 && (
-              <div className="ml-auto inline-flex gap-0.5 rounded bg-surface-alt p-0.5 text-xs">
-                <button
-                  type="button"
-                  aria-pressed={previewScope === "active"}
-                  onClick={() => setPreviewScope("active")}
-                  className={`rounded px-2.5 py-1 font-semibold transition-colors ${
-                    previewScope === "active"
-                      ? "bg-surface text-foreground shadow-[var(--shadow-2)]"
-                      : "text-text-secondary hover:text-foreground"
-                  }`}
-                >
-                  This section
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={previewScope === "all"}
-                  onClick={() => setPreviewScope("all")}
-                  title="Preview every section stacked, exactly as Copy all produces it"
-                  className={`rounded px-2.5 py-1 font-semibold transition-colors ${
-                    previewScope === "all"
-                      ? "bg-surface text-foreground shadow-[var(--shadow-2)]"
-                      : "text-text-secondary hover:text-foreground"
-                  }`}
-                >
-                  All sections
-                </button>
-              </div>
-            )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {view === "json" ? (
@@ -902,13 +897,6 @@ export function PasteInput() {
                   Paste a table to see it here, exactly as it came from Excel.
                 </p>
               )
-            ) : previewScope === "all" && tables.length > 1 ? (
-              <RenderedPreview
-                sections={sectionHtmls}
-                headingStyle={headingStyle}
-                bodyFont={bodyFont}
-                emptyHint="No section has any fields yet. Add fields in a section to build the outline."
-              />
             ) : (
               <RenderedPreview
                 html={activeHtml}

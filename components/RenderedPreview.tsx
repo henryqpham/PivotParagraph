@@ -1,7 +1,10 @@
 import type { HeadingStyle } from "@/lib/clipboard";
 
 /**
- * Read-only display of the rendered pivot HTML produced by `renderPivotTree`.
+ * Read-only display of the ACTIVE section's rendered pivot HTML (from
+ * `renderPivotTree`). Each section is its own document now, so this always shows
+ * exactly one section — the same fragment `copySection` copies to the clipboard,
+ * so preview and export can't diverge.
  *
  * The HTML is injected via `dangerouslySetInnerHTML`, which is safe here:
  * `renderPivotTree` escapes every user-derived value (titles, field labels), so
@@ -9,16 +12,9 @@ import type { HeadingStyle } from "@/lib/clipboard";
  * constant `style` attributes -- no user value lands in an attribute, so there is
  * no injection surface.
  *
- * Two modes:
- * - a single `html` string (the ACTIVE section, for focused editing), or
- * - a `sections` array (the "All sections" view). Each section is rendered on its
- *   own "paper" page so the user sees page breaks, but the CONTENT is exactly the
- *   per-table fragments that `Copy all` concatenates -- so the preview and the
- *   export can never diverge (stacking papers === joining the same strings).
- *
  * Tailwind v4 preflight strips heading sizes. We restore spacing with
  * arbitrary-descendant variants, and the heading look (color/font/size/weight)
- * from a scoped `<style>` so the preview matches what a "Copy all" +
+ * from a scoped `<style>` so the preview matches what a "Copy section" +
  * keep-source paste will produce. The style values are sanitized in the form
  * (hex color, allow-listed font, clamped sizes).
  */
@@ -30,28 +26,17 @@ const previewClasses =
 
 export function RenderedPreview({
   html,
-  sections,
   emptyHint,
   headingStyle,
   bodyFont,
 }: {
-  /** Single-section HTML (the active section). Ignored when `sections` is given. */
+  /** The active section's rendered HTML fragment ("" when it has no fields). */
   html?: string;
-  /** Per-section HTML fragments for the combined "All sections" view. */
-  sections?: string[];
   emptyHint?: string;
   headingStyle: HeadingStyle;
   bodyFont: string;
 }) {
-  // The papers to render: every non-empty section in combined mode, else the one
-  // active fragment. A section with no placed fields renders "" and is dropped.
-  const papers = sections
-    ? sections.filter((s) => s !== "")
-    : html
-      ? [html]
-      : [];
-
-  if (papers.length === 0) {
+  if (!html) {
     return (
       <p className="text-sm text-foreground/60">
         {emptyHint ??
@@ -89,41 +74,49 @@ export function RenderedPreview({
     `.ws-preview .ws-title{color:${t.color};font-family:'${t.font}';font-size:${t.size}pt;` +
     `font-weight:${t.bold ? 700 : 400};font-style:${t.italic ? "italic" : "normal"};` +
     `text-decoration:${t.underline ? "underline" : "none"}}`;
+  // A title mapped to a Word heading (headingStyleName set) is ALSO numbered by
+  // Word on paste, exactly like a body heading row — so it gets the same "# "
+  // placeholder. The ::before only renders if a `.ws-title` actually exists, so a
+  // titleless section shows nothing.
+  const titleMapped = (headingStyle.headingStyleName ?? "") !== "";
+  const titleRendered = html.includes('class="ws-title"');
   const css =
     titleRule +
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
     ).join("") +
     `.ws-preview [data-heading]{margin-left:0;font-weight:700}` +
-    `.ws-preview [data-heading]::before{content:"# ";opacity:0.4;font-weight:400}`;
+    `.ws-preview [data-heading]::before{content:"# ";opacity:0.4;font-weight:400}` +
+    (titleMapped
+      ? `.ws-preview .ws-title::before{content:"# ";opacity:0.4;font-weight:400}`
+      : "");
 
-  const hasHeadings = papers.some((p) => p.includes("data-heading"));
+  // Show the heading footnote whenever a "# " placeholder is visible: a body row
+  // mapped to a Word heading, OR a title that is itself mapped to a heading. Match
+  // the real emitted attribute (` data-heading="…`), not a bare substring, so a
+  // cell/title whose text merely contains "data-heading" can't trigger it.
+  const hasHeadings =
+    (titleMapped && titleRendered) || html.includes(' data-heading="');
 
   return (
     <div>
-      {/* One shared scoped stylesheet; the `.ws-preview` selectors apply to every
-          paper below (each carries the ws-preview class). */}
+      {/* Scoped stylesheet; the `.ws-preview` selectors apply to the paper below. */}
       <style>{css}</style>
-      <div className="flex flex-col gap-4">
-        {papers.map((p, i) => (
-          <div
-            key={i}
-            aria-label={
-              sections
-                ? `Combined preview, section ${i + 1} of ${papers.length}`
-                : "Rendered section preview"
-            }
-            className={previewClasses}
-            style={{ fontFamily: bodyFont }}
-            dangerouslySetInnerHTML={{ __html: p }}
-          />
-        ))}
-      </div>
+      <div
+        aria-label="Rendered section preview"
+        className={previewClasses}
+        style={{ fontFamily: bodyFont }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
       {hasHeadings && (
         <p className="mt-2 text-xs text-muted">
-          <span className="opacity-40"># </span>= Word fills in the heading number
-          (e.g. 5.1) on a <strong>Use Destination Styles</strong> paste; that row
-          also appears in the Navigation pane and is collapsible.
+          <span className="opacity-40"># </span>= Word supplies the heading number
+          (e.g. 5.0, 5.1) on a <strong>Use Destination Styles</strong> paste, and
+          the row joins the Navigation pane. Word applies the destination
+          heading&apos;s own formatting too, so it can come out{" "}
+          <strong>ALL-CAPS</strong> even though the preview shows normal case. For a
+          preview that matches Word exactly, use <strong>Multilevel numbers</strong>{" "}
+          instead of a Word heading (the app draws the numbers itself).
         </p>
       )}
     </div>

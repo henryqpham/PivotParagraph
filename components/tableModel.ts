@@ -82,6 +82,17 @@ export const DEFAULT_LEVEL: LevelInput = {
   bold: false,
 };
 
+/**
+ * Maximum indent depth (number of buckets). Word supports only 9 list/heading
+ * levels, and the render pipeline hard-caps at 9 everywhere downstream: the
+ * renderer clamps `data-level` to `Math.min(level, 9)`, `RenderedPreview` builds
+ * exactly 9 `data-level` style rules, and `buildWordHtml`'s regexes only match
+ * `data-level="[1-9]"` / `data-heading="[1-9]"`. So a 10th bucket would render at
+ * level 9 in the preview and could be DROPPED from the Word output — the builder
+ * must never create a structure deeper than this, or it diverges from the preview.
+ */
+export const MAX_LEVELS = 9;
+
 // ---------------------------------------------------------------------------
 // Pure helpers on the bucket structure (`number[][]`). All return a fresh array
 // and never mutate. A "flattened index" `fi` is a field's position in
@@ -111,8 +122,17 @@ function locate(levels: number[][], fi: number): { b: number; k: number } | null
   return null;
 }
 
-/** Append a column as a new deepest single-field bucket. */
+/**
+ * Add a column to the structure. Normally it appends a new deepest single-field
+ * bucket, but once the depth cap (`MAX_LEVELS`) is reached it STACKS into the
+ * deepest existing bucket instead of creating a 10th level — so every column can
+ * still be placed without building a structure the preview/Word can't show.
+ */
 export function addField(levels: number[][], col: number): number[][] {
+  if (levels.length >= MAX_LEVELS) {
+    const last = levels.length - 1;
+    return levels.map((bk, i) => (i === last ? [...bk, col] : bk));
+  }
   return [...levels, [col]];
 }
 
@@ -126,10 +146,14 @@ export function removeField(levels: number[][], fi: number): number[][] {
   return levels.map((bk, i) => (i === b ? bucket : bk));
 }
 
-/** Whether ► (indent) is allowed for the field at `fi`: not first in its bucket. */
+/**
+ * Whether ► (indent) is allowed for the field at `fi`: it must not be first in its
+ * bucket (nothing to split off), AND we must be under the depth cap — indenting
+ * splits one bucket into two, so it can't push the structure past `MAX_LEVELS`.
+ */
 export function canIndent(levels: number[][], fi: number): boolean {
   const at = locate(levels, fi);
-  return at != null && at.k > 0;
+  return at != null && at.k > 0 && levels.length < MAX_LEVELS;
 }
 
 /**

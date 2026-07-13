@@ -281,6 +281,12 @@ export function renderPivotTree(
   const numberOf = numbered
     ? multilevelNumbers(nodes, numbering, headingLevels)
     : null;
+  // A body level mapped to a Word heading nests one under the TITLE's heading — but
+  // ONLY when a title is actually emitted. `titleLevel` (from the Heading dropdown,
+  // default "Heading 1") is passed even for a BLANK title, so gate the offset on
+  // whether a title exists; otherwise a top body heading becomes Heading 2 with no
+  // Heading 1 title above it (an orphaned/malformed Word outline).
+  const bodyHeadingBase = title ? titleLevel : 0;
   const blocks: string[] = [];
   const walk = (list: PivotNode[], level: number, depth: number) => {
     const lvl = Math.min(level, 9);
@@ -290,7 +296,7 @@ export function renderPivotTree(
     // number PATH still computes (via numberOf), so deeper body rows nest correctly.
     // headingK = the Word heading level (body nests one under a Heading-1 title).
     const isHeading = headingLevels[depth - 1] === true;
-    const headingK = Math.min(titleLevel + depth, 9);
+    const headingK = Math.min(bodyHeadingBase + depth, 9);
     list.forEach((node, i) => {
       // Markers render only in "custom" mode (each level's chosen symbol); a
       // multilevel node shows its precomputed number instead, and "off" shows
@@ -326,8 +332,10 @@ export function renderPivotTree(
         );
       });
       if (node.children.length > 0) walk(node.children, level + 1, depth + 1);
-      // Spacer AFTER the whole subtree, so it never affects sibling counters.
-      if (breakAfter[depth - 1])
+      // Spacer AFTER the whole subtree, so it never affects sibling counters. Only
+      // BETWEEN siblings (not after the last), so a section doesn't end on a stray
+      // blank paragraph — matches the "blank line between groups" wording.
+      if (breakAfter[depth - 1] && i < list.length - 1)
         blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
     });
   };

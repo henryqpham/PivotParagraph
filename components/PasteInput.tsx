@@ -8,7 +8,7 @@ import {
   headingLevel,
 } from "@/lib/clipboard";
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
-import { loadSession, saveSession } from "@/lib/persistence";
+import { loadSession, saveSession, clearSession } from "@/lib/persistence";
 import {
   tableToHtml,
   newTable,
@@ -174,7 +174,13 @@ export function PasteInput() {
   // ---- Persistence: debounced save on any workspace change ----------------
   useEffect(() => {
     if (!hydrated) return;
-    const handle = setTimeout(() => saveSession(snapshot), 400);
+    const handle = setTimeout(() => {
+      // An empty workspace REMOVES the saved key entirely rather than persisting an
+      // empty shell — so Clear all (or removing the last section) truly wipes the
+      // cache instead of leaving a lingering entry behind.
+      if (snapshot.tables.length === 0) clearSession();
+      else saveSession(snapshot);
+    }, 400);
     return () => clearTimeout(handle);
   }, [hydrated, snapshot]);
 
@@ -184,9 +190,11 @@ export function PasteInput() {
   //      empty initial state. ------------------------------------------------
   useEffect(() => {
     const flush = () => {
-      if (hydratedRef.current && snapshotRef.current) {
-        saveSession(snapshotRef.current);
-      }
+      if (!hydratedRef.current || !snapshotRef.current) return;
+      const s = snapshotRef.current;
+      // Same rule as the debounced save: an empty workspace removes the key.
+      if (s.tables.length === 0) clearSession();
+      else saveSession(s);
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flush();
@@ -431,6 +439,10 @@ export function PasteInput() {
     setActiveId(null);
     setError(null);
     setConfirmClear(false);
+    // Remove the localStorage entry right away (the debounced effect would also do
+    // this once state settles, but wipe immediately so the cache is gone the moment
+    // you clear, not 400ms later).
+    clearSession();
   }
 
   // Flash the transient copy-button state, replacing any prior 2s reset timer so a

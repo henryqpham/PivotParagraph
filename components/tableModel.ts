@@ -291,3 +291,34 @@ export function tableToHtml(t: TableState, titleLevel = 0): string {
     titleLevel,
   );
 }
+
+/**
+ * A rough, at-a-glance summary of a section's shape — how many raw rows it started
+ * from, how many indent levels it uses, and about how many Word pages the rendered
+ * output would span. `pages` is a HEURISTIC (a flat lines-per-page constant, not
+ * real text-wrapping/layout) — good enough to gauge "does this still fit a page,"
+ * not a substitute for looking at the actual output.
+ */
+export type SectionStats = { rows: number; levels: number; pages: number };
+
+// Usable body height on a US Letter page at buildWordHtml's fixed 1in margins
+// (lib/clipboard.ts: `@page{size:8.5in 11in;margin:1in}`).
+const PAGE_BODY_HEIGHT_IN = 9;
+// Assumed body line height in inches (~11pt at this app's 115% line-height,
+// rounded up a bit to account for text that wraps onto extra lines — a flat
+// paragraph count can't see wrapping, so this errs toward more pages, not fewer).
+const ASSUMED_LINE_HEIGHT_IN = 0.2;
+
+export function estimateSectionStats(t: TableState, html: string): SectionStats {
+  const rows = Math.max(0, t.grid.length - 1); // data rows, excluding the header
+  const levels = t.pivotLevels.length;
+  const paragraphs = html === "" ? 0 : (html.match(/<p /g) ?? []).length;
+  const pages =
+    paragraphs === 0
+      ? 0
+      : Math.max(
+          1,
+          Math.ceil((paragraphs * ASSUMED_LINE_HEIGHT_IN) / PAGE_BODY_HEIGHT_IN),
+        );
+  return { rows, levels, pages };
+}

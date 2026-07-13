@@ -174,6 +174,9 @@ function TableCardInner({
   const [startInput, setStartInput] = useState(String(table.numbering.start));
   // Which per-level "Look" popover (by level index) is open, or null.
   const [openPop, setOpenPop] = useState<number | null>(null);
+  // A plain-text filter over the Add-fields pool, only shown once it's long enough
+  // to need one (a wide spreadsheet can have dozens of columns).
+  const [fieldFilter, setFieldFilter] = useState("");
 
   const { grid, pivotLevels } = table;
   // A body bucket's GLOBAL level-style slot = its indent depth, +1 when a Section
@@ -192,6 +195,15 @@ function TableCardInner({
     () => unusedColumns(headers.length, pivotLevels),
     [headers.length, pivotLevels],
   );
+  const showFieldFilter = unused.length > 8;
+  const fieldFilterLower = fieldFilter.trim().toLowerCase();
+  const visibleUnused = fieldFilterLower
+    ? unused.filter((col) =>
+        (headers[col] || `Column ${col + 1}`)
+          .toLowerCase()
+          .includes(fieldFilterLower),
+      )
+    : unused;
 
   const placed = useMemo(() => {
     const out: { col: number; b: number; fi: number }[] = [];
@@ -346,12 +358,40 @@ function TableCardInner({
         ) : (
           <div className="flex flex-col gap-1 text-sm text-text-secondary">
             {/* Add fields */}
-            <div className={`${SUB} !mt-0`}>Add fields</div>
+            <div className={`${SUB} !mt-0 flex items-center justify-between gap-2`}>
+              <span>Add fields</span>
+              {showFieldFilter && (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={fieldFilter}
+                    onChange={(e) => setFieldFilter(e.target.value)}
+                    placeholder="Filter fields…"
+                    aria-label="Filter the Add-fields pool"
+                    className="h-6 w-40 rounded border border-border-strong bg-surface px-2 pr-5 text-[11px] normal-case tracking-normal text-foreground outline-none transition-colors focus:border-accent"
+                  />
+                  {fieldFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setFieldFilter("")}
+                      aria-label="Clear filter"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 leading-none text-muted transition-colors hover:text-foreground"
+                    >
+                      &times;
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {unused.length === 0 ? (
                 <span className="text-xs text-muted">All fields added.</span>
+              ) : visibleUnused.length === 0 ? (
+                <span className="text-xs text-muted">
+                  No fields match &ldquo;{fieldFilter.trim()}&rdquo;.
+                </span>
               ) : (
-                unused.map((col) => (
+                visibleUnused.map((col) => (
                   <button
                     key={col}
                     type="button"

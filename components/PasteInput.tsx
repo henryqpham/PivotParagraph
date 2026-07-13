@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { parseClipboard } from "@/lib/parser";
 import {
   buildWordHtml,
@@ -13,6 +20,7 @@ import {
   tableToHtml,
   newTable,
   makeExampleTable,
+  estimateSectionStats,
   DEFAULT_LEVEL,
   type LevelInput,
   type TableState,
@@ -54,8 +62,11 @@ type CopyNote =
   | { status: "empty" }
   | { status: "error" };
 
-/** A one-step undo snapshot for a destructive action (remove one / clear all). */
+/** One undo snapshot for a destructive action (remove / clear all / import). */
 type UndoState = { label: string; tables: TableState[]; activeId: string | null };
+// How many consecutive destructive actions the undo stack remembers before the
+// oldest silently drops off — a generous cushion, not a hard promise of history.
+const MAX_UNDO_STACK = 10;
 
 // ---- Fluent control recipes -----------------------------------------------
 const BTN_PRIMARY =
@@ -81,15 +92,21 @@ export function PasteInput() {
   const [copyNote, setCopyNote] = useState<CopyNote | null>(null);
   // Two-step guard on the destructive "Clear all".
   const [confirmClear, setConfirmClear] = useState(false);
-  // One-step undo for the last remove/clear.
-  const [undo, setUndo] = useState<UndoState | null>(null);
+  // Multi-step undo/redo stacks for destructive actions (remove / clear / import),
+  // most recent last — the classic two-stack model: undoing pops undoStack and
+  // pushes the replaced state onto redoStack (and vice versa for redo), so you can
+  // freely step back and forth. No auto-expiry — they persist until the next edit
+  // (noteEdit clears both, since every entry is a full-state snapshot that an
+  // intervening edit would invalidate) or a NEW destructive action (which also
+  // drops any pending redo — you've branched away from that future).
+  const [undoStack, setUndoStack] = useState<UndoState[]>([]);
+  const [redoStack, setRedoStack] = useState<UndoState[]>([]);
   // Gate persistence writes until after the initial localStorage load, so we never
   // clobber saved work with the empty initial state.
   const [hydrated, setHydrated] = useState(false);
   const idRef = useRef(0);
-  const undoBtnRef = useRef<HTMLButtonElement>(null);
-  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   // Latest snapshot + a hydration flag, kept in refs so the tab-hide flush can
   // save synchronously (from an event, without stale closure state) and never
   // overwrite saved work before the initial load has run.
@@ -108,6 +125,29 @@ export function PasteInput() {
   // Shared TITLE look (its own controls in the Section Header group).
   const [titleInput, setTitleInput] = useState<TitleInput>(DEFAULT_TITLE);
 
+  // Apply a full workspace snapshot into state — shared by the mount-time
+  // localStorage rehydration below AND by Import (a user-selected backup file), so
+  // the two "load a snapshot" paths can never drift apart. Only ever calls stable
+  // setState setters + writes a ref, so it has no reactive dependencies and is safe
+  // as an empty-deps useCallback (satisfies exhaustive-deps without disabling it).
+  const applySnapshot = useCallback((s: SessionSnapshot) => {
+    setTables(s.tables);
+    setLevelStyles(Array.isArray(s.levelStyles) ? s.levelStyles : []);
+    setBodyFont(s.bodyFont ?? "Arial");
+    setIndentInput(s.indentInput ?? "0.2");
+    setHeadingStyleName(s.headingStyleName ?? "Heading 1");
+    setTitleInput(s.titleInput ?? DEFAULT_TITLE);
+    const restoredActive =
+      s.tables.find((t) => t.id === s.activeId)?.id ?? s.tables[0]?.id ?? null;
+    setActiveId(restoredActive);
+    // Re-seed the id counter past the largest restored id so new pastes never
+    // collide with a restored `t<N>`.
+    idRef.current = s.tables.reduce((max, t) => {
+      const n = parseInt(String(t.id).replace(/\D/g, ""), 10);
+      return Number.isFinite(n) ? Math.max(max, n) : max;
+    }, 0);
+  }, []);
+
   // ---- Persistence: rehydrate once on mount -------------------------------
   // Loading from localStorage is inherently a client-only, mount-time sync with an
   // external store: the first client render must match the empty server render, so
@@ -123,27 +163,12 @@ export function PasteInput() {
       typeof data === "object" &&
       Array.isArray((data as SessionSnapshot).tables)
     ) {
-      const s = data as SessionSnapshot;
-      setTables(s.tables);
-      setLevelStyles(Array.isArray(s.levelStyles) ? s.levelStyles : []);
-      setBodyFont(s.bodyFont ?? "Arial");
-      setIndentInput(s.indentInput ?? "0.2");
-      setHeadingStyleName(s.headingStyleName ?? "Heading 1");
-      setTitleInput(s.titleInput ?? DEFAULT_TITLE);
-      const restoredActive =
-        s.tables.find((t) => t.id === s.activeId)?.id ?? s.tables[0]?.id ?? null;
-      setActiveId(restoredActive);
-      // Re-seed the id counter past the largest restored id so new pastes never
-      // collide with a restored `t<N>`.
-      idRef.current = s.tables.reduce((max, t) => {
-        const n = parseInt(String(t.id).replace(/\D/g, ""), 10);
-        return Number.isFinite(n) ? Math.max(max, n) : max;
-      }, 0);
+      applySnapshot(data as SessionSnapshot);
     }
     hydratedRef.current = true;
     setHydrated(true);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, []);
+  }, [applySnapshot]);
 
   // The full workspace snapshot; one memo feeds both the debounced save and the
   // synchronous tab-hide flush so they can never disagree.
@@ -216,11 +241,12 @@ export function PasteInput() {
     // A stale paste-error banner is no longer relevant once the user does anything
     // else, so clear it here too (mirrors how the copy note is cleared on edit).
     setError(null);
-    // The one-step undo only applies to the destructive action that created it.
-    // Once the user does anything else, drop it — otherwise clicking Undo later
-    // would blow away all the edits made in between (and that loss auto-persists).
-    setUndo(null);
-    if (undoTimer.current) clearTimeout(undoTimer.current);
+    // Every undo/redo entry is a FULL-STATE snapshot from before one action. The
+    // moment the user edits anything else, an older entry would revert (or
+    // re-apply) that edit too if popped — so any edit drops BOTH stacks, not just
+    // the top of one.
+    setUndoStack([]);
+    setRedoStack([]);
   }
 
   // The pending "Clear all?" confirm auto-cancels if left untouched.
@@ -229,12 +255,6 @@ export function PasteInput() {
     const handle = setTimeout(() => setConfirmClear(false), 4000);
     return () => clearTimeout(handle);
   }, [confirmClear]);
-
-  // When an undo affordance appears, move focus onto it so a keyboard user who
-  // just removed a section lands on Undo instead of being dropped to <body>.
-  useEffect(() => {
-    if (undo) undoBtnRef.current?.focus();
-  }, [undo]);
 
   const headingStyle = useMemo<HeadingStyle>(() => {
     const clampPt = (s: string, fallback: number) => {
@@ -405,18 +425,144 @@ export function PasteInput() {
   }
 
   function pushUndo(label: string) {
-    setUndo({ label, tables, activeId });
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(() => setUndo(null), 7000);
+    // Cap the stack so a long burst of removes can't grow it unboundedly; the
+    // oldest entry silently drops once the cap is hit. A NEW destructive action
+    // also drops any pending redo — you've branched away from that future.
+    setUndoStack((stack) => [
+      ...stack.slice(-(MAX_UNDO_STACK - 1)),
+      { label, tables, activeId },
+    ]);
+    setRedoStack([]);
   }
 
+  // Pop the most recent undo entry and restore it — but first push the CURRENT
+  // (about-to-be-replaced) state onto redoStack under the SAME label, so Redo can
+  // step forward again. Leaves the rest of undoStack intact so several destructive
+  // actions done back-to-back (no edit in between) can each be undone in turn.
   function doUndo() {
-    if (!undo) return;
+    if (undoStack.length === 0) return;
+    const last = undoStack[undoStack.length - 1];
+    setRedoStack((stack) => [
+      ...stack.slice(-(MAX_UNDO_STACK - 1)),
+      { label: last.label, tables, activeId },
+    ]);
     setCopyNote(null);
-    setTables(undo.tables);
-    setActiveId(undo.activeId);
-    setUndo(null);
-    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setTables(last.tables);
+    setActiveId(last.activeId);
+    setUndoStack((stack) => stack.slice(0, -1));
+    setStatus(`Undid: ${last.label}.`);
+  }
+
+  // The mirror image of doUndo: pop the most recent redo entry, push the current
+  // state back onto undoStack, and apply it.
+  function doRedo() {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack((stack) => [
+      ...stack.slice(-(MAX_UNDO_STACK - 1)),
+      { label: next.label, tables, activeId },
+    ]);
+    setCopyNote(null);
+    setTables(next.tables);
+    setActiveId(next.activeId);
+    setRedoStack((stack) => stack.slice(0, -1));
+    setStatus(`Redid: ${next.label}.`);
+  }
+
+  // Ctrl/Cmd+Z (undo) and Ctrl+Y / Ctrl/Cmd+Shift+Z (redo) anywhere except inside a
+  // text field (matching the paste-anywhere guard below). Kept in refs — same
+  // reason as ingestRef below — so the mount-only listener never closes over a
+  // stale doUndo/doRedo (and the stacks they read) from the render it was attached
+  // in.
+  const doUndoRef = useRef(doUndo);
+  const doRedoRef = useRef(doRedo);
+  useEffect(() => {
+    doUndoRef.current = doUndo;
+    doRedoRef.current = doRedo;
+  });
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      const isRedo = key === "y" || (key === "z" && e.shiftKey);
+      const isUndo = key === "z" && !e.shiftKey;
+      if (!isRedo && !isUndo) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.isContentEditable)
+      ) {
+        return; // let the focused field handle its own undo/redo
+      }
+      e.preventDefault();
+      if (isRedo) doRedoRef.current();
+      else doUndoRef.current();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // ---- Workspace backup: export/import the whole session as a local .json file.
+  //      No backend — this is the client-side answer to "don't lose my work" /
+  //      "what if I clear my browser data". ----------------------------------
+  function exportWorkspace() {
+    const payload = {
+      app: "excel-word-sections",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      data: snapshot,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `excel-word-workspace-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowDoc(false);
+  }
+
+  function handleImportFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file to re-trigger onChange
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        // Accept our own {app, version, data} export envelope OR a bare
+        // SessionSnapshot, so a raw exported/loadSession-style blob still imports.
+        const data =
+          parsed && typeof parsed === "object" && "data" in parsed
+            ? (parsed as { data: unknown }).data
+            : parsed;
+        if (
+          !data ||
+          typeof data !== "object" ||
+          !Array.isArray((data as SessionSnapshot).tables)
+        ) {
+          throw new Error("not a workspace backup");
+        }
+        setCopyNote(null);
+        setError(null);
+        setConfirmClear(false);
+        // The PRE-import state becomes undoable — deliberately NOT via noteEdit()
+        // (that would immediately clear the entry this push just added).
+        pushUndo("Workspace imported");
+        applySnapshot(data as SessionSnapshot);
+        setShowDoc(false);
+        setStatus("Workspace imported.");
+      } catch {
+        setError("Couldn't read that file as a workspace backup.");
+      }
+    };
+    reader.onerror = () => setError("Couldn't read that file.");
+    reader.readAsText(file);
   }
 
   function removeTable(id: string) {
@@ -430,6 +576,10 @@ export function PasteInput() {
       return remaining[Math.min(idx, remaining.length - 1)].id;
     });
     setTables((ts) => ts.filter((t) => t.id !== id));
+    // The undo/redo toolbar buttons are persistent (no more transient banner), so
+    // this announcement is now the only screen-reader signal that a removal
+    // happened — routed through the existing sr-only status region.
+    setStatus("Section removed. Undo available (Ctrl+Z).");
   }
 
   function clearAll() {
@@ -443,6 +593,7 @@ export function PasteInput() {
     // this once state settles, but wipe immediately so the cache is gone the moment
     // you clear, not 400ms later).
     clearSession();
+    setStatus("All sections cleared. Undo available (Ctrl+Z).");
   }
 
   // Flash the transient copy-button state, replacing any prior 2s reset timer so a
@@ -507,6 +658,12 @@ export function PasteInput() {
   const activeHtml = useMemo(
     () => (activeTable ? tableToHtml(activeTable, titleLevel) : ""),
     [activeTable, titleLevel],
+  );
+  // Rows/levels/rough-page-count readout for the active section — a quick at-a-
+  // glance answer to "does this still fit a page," shown next to the preview tabs.
+  const activeStats = useMemo(
+    () => (activeTable ? estimateSectionStats(activeTable, activeHtml) : null),
+    [activeTable, activeHtml],
   );
 
   // ---- Paste zone (a focusable drop target; the actual paste is handled by the
@@ -619,31 +776,10 @@ export function PasteInput() {
     </div>
   );
 
-  const undoBanner = undo && (
-    <div
-      role="status"
-      className="flex items-center gap-3 rounded border border-border-strong bg-surface px-4 py-2.5 text-sm text-text-secondary shadow-[var(--shadow-2)]"
-    >
-      <span className="flex-1">{undo.label}.</span>
-      <button
-        ref={undoBtnRef}
-        type="button"
-        onClick={doUndo}
-        className="rounded px-2 py-1 text-sm font-semibold text-accent-text transition-colors hover:bg-accent-subtle"
-      >
-        Undo
-      </button>
-      <button
-        type="button"
-        onClick={() => setUndo(null)}
-        aria-label="Dismiss"
-        className="shrink-0 leading-none text-muted transition-colors hover:text-foreground"
-      >
-        &times;
-      </button>
-    </div>
-  );
-
+  // Undo/Redo now live as persistent toolbar buttons in the top band (see below)
+  // rather than a transient banner — their disabled state + tooltip communicate
+  // availability, and setStatus(...) calls (removeTable/clearAll/doUndo/doRedo)
+  // keep screen readers informed via the sr-only status region below.
   const statusRegion = (
     <p className="sr-only" role="status" aria-live="polite">
       {status}
@@ -651,11 +787,10 @@ export function PasteInput() {
   );
 
   const notifications =
-    (errorBanner || copyBanner || undoBanner) ? (
+    errorBanner || copyBanner ? (
       <div className="flex flex-col gap-2 px-4 pt-3">
         {errorBanner}
         {copyBanner}
-        {undoBanner}
       </div>
     ) : null;
 
@@ -676,6 +811,41 @@ export function PasteInput() {
           <span className="text-xs text-muted">
             {tables.length} of {MAX_TABLES} sections
           </span>
+          {/* Undo/Redo — persistent toolbar buttons (not a transient banner):
+              always present, disabled + greyed out when their stack is empty, with
+              the pending action's label in the tooltip. Kept on the LEFT, away from
+              the destructive/primary actions on the right, matching the
+              undo/redo-near-the-start convention most editors use. */}
+          <div className="ml-2 flex items-center gap-0.5 border-l border-border pl-2">
+            <button
+              type="button"
+              onClick={doUndo}
+              disabled={undoStack.length === 0}
+              aria-label="Undo"
+              title={
+                undoStack.length > 0
+                  ? `Undo: ${undoStack[undoStack.length - 1].label} (Ctrl+Z)`
+                  : "Nothing to undo"
+              }
+              className="grid h-8 w-8 place-items-center rounded text-base text-text-secondary transition-colors hover:bg-surface-alt hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              &#8630;
+            </button>
+            <button
+              type="button"
+              onClick={doRedo}
+              disabled={redoStack.length === 0}
+              aria-label="Redo"
+              title={
+                redoStack.length > 0
+                  ? `Redo: ${redoStack[redoStack.length - 1].label} (Ctrl+Y)`
+                  : "Nothing to redo"
+              }
+              className="grid h-8 w-8 place-items-center rounded text-base text-text-secondary transition-colors hover:bg-surface-alt hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              &#8631;
+            </button>
+          </div>
           <div className="ml-auto flex items-center gap-2">
             {/* ⚙ Document — GLOBAL body settings (all tables): body font, indent per
                 nesting level, and reset-levels. Owned here (PasteInput holds the
@@ -736,8 +906,45 @@ export function PasteInput() {
                   >
                     Reset levels
                   </button>
+                  <div className="flex flex-col gap-1.5 border-t border-border pt-3">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                      Backup
+                    </span>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={exportWorkspace}
+                        disabled={tables.length === 0}
+                        title="Download the whole workspace as a .json file"
+                        className="h-8 flex-1 rounded border border-border-strong bg-surface px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent hover:text-accent-text disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        Export
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => importInputRef.current?.click()}
+                        title="Restore a previously exported workspace"
+                        className="h-8 flex-1 rounded border border-border-strong bg-surface px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent hover:text-accent-text"
+                      >
+                        Import&hellip;
+                      </button>
+                    </div>
+                    <p className="text-[10.5px] leading-snug text-muted">
+                      Local-only backup — nothing is uploaded. Importing replaces
+                      the current workspace (undoable).
+                    </p>
+                  </div>
                 </div>
               </Popover>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json"
+                onChange={handleImportFile}
+                className="hidden"
+                aria-hidden="true"
+                tabIndex={-1}
+              />
             </div>
             {confirmClear ? (
               <span className="inline-flex items-center gap-1 rounded bg-surface-alt px-1.5">
@@ -891,6 +1098,22 @@ export function PasteInput() {
                 </button>
               ))}
             </div>
+            {activeStats && (
+              <span
+                className="ml-auto whitespace-nowrap text-xs tabular-nums text-muted"
+                title="Rough estimate — long values wrap to more lines than this counts."
+              >
+                {activeStats.rows} row{activeStats.rows === 1 ? "" : "s"} ·{" "}
+                {activeStats.levels} level{activeStats.levels === 1 ? "" : "s"}
+                {activeStats.pages > 0 && (
+                  <>
+                    {" "}
+                    · ~{activeStats.pages} page
+                    {activeStats.pages === 1 ? "" : "s"}
+                  </>
+                )}
+              </span>
+            )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {view === "json" ? (

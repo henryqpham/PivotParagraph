@@ -28,6 +28,20 @@ export function SectionsRail({
   // indicator). Both are flat indices into `tables`, or null when idle.
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
+  // A plain-text filter, only shown once the rail gets long enough to need one.
+  // Non-matching rows render as null rather than being spliced out of the array,
+  // so `i` below stays the row's TRUE index into `tables` — drag-and-drop reorder
+  // (which operates on those indices) stays correct even while filtered.
+  const [filter, setFilter] = useState("");
+  const showFilter = tables.length > 8;
+  const filterLower = filter.trim().toLowerCase();
+  const labelOf = (t: TableState, i: number) => t.sectionTitle.trim() || `Table ${i + 1}`;
+  const matchesFilter = (t: TableState, i: number) =>
+    !filterLower || labelOf(t, i).toLowerCase().includes(filterLower);
+  const visibleCount = tables.reduce(
+    (n, t, i) => n + (matchesFilter(t, i) ? 1 : 0),
+    0,
+  );
 
   function endDrag() {
     setDragIndex(null);
@@ -49,10 +63,38 @@ export function SectionsRail({
       <div className="border-b border-border px-2 pb-1.5 pt-1 text-xs font-semibold uppercase tracking-wide text-muted">
         Sections
       </div>
+      {showFilter && (
+        <div className="relative mt-1.5 px-1">
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter sections…"
+            aria-label="Filter sections by title"
+            className="h-7 w-full rounded border border-border-strong bg-surface px-2 pr-6 text-xs text-foreground outline-none transition-colors focus:border-accent"
+          />
+          {filter && (
+            <button
+              type="button"
+              onClick={() => setFilter("")}
+              aria-label="Clear filter"
+              className="absolute right-2 top-1/2 -translate-y-1/2 leading-none text-muted transition-colors hover:text-foreground"
+            >
+              &times;
+            </button>
+          )}
+        </div>
+      )}
       <div className="mt-1 flex flex-col gap-0.5">
+        {showFilter && filterLower && visibleCount === 0 && (
+          <p className="px-2 py-1 text-xs text-muted">
+            No sections match &ldquo;{filter.trim()}&rdquo;.
+          </p>
+        )}
         {tables.map((t, i) => {
+          if (!matchesFilter(t, i)) return null;
           const isActive = activeId === t.id;
-          const label = t.sectionTitle.trim() || `Table ${i + 1}`;
+          const label = labelOf(t, i);
           const isDragging = dragIndex === i;
           const isDropTarget =
             overIndex === i && dragIndex !== null && dragIndex !== i;

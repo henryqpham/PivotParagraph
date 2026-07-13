@@ -47,7 +47,7 @@ clipboard (text/html, else text/plain)
   -> buildWordHtml + htmlToPlainText -> navigator.clipboard.write             -> paste into Word
 ```
 
-**Copy all** is the sole export: it joins every table's `tableToHtml` fragment (in paste order — the Sections-rail order, reorderable via `SectionsRail`'s ▲▼) and runs **one** `buildWordHtml` (valid because its rewrites are global regexes and it emits a single `@page`). The same per-section `sectionHtmls` array feeds the **combined “All sections” preview** (`RenderedPreview`’s `sections?: string[]` renders each on its own paper page), so what you preview is exactly what Copy all writes. `tableToHtml` also powers the single-section live preview, so preview and export stay identical. On success `copyAll` sets a `copyNote` that renders as a visible + `aria-live` banner (contributing count + the Keep-Source-vs-Use-Destination paste guidance); `renderPivotTree` escapes all user-derived text (`& < >`). The JSON view shows the raw Grid instead of the rendered tree.
+**Copy all** is the sole export: it joins every table's `tableToHtml` fragment (in paste order — the Sections-rail order, reorderable via `SectionsRail`'s ▲▼) and runs **one** `buildWordHtml` (valid because its rewrites are global regexes and it emits a single `@page`). The same per-section `sectionHtmls` array feeds the **combined “All sections” preview** (`RenderedPreview`’s `sections?: string[]` renders each on its own paper page), so what you preview is exactly what Copy all writes. `tableToHtml` also powers the single-section live preview, so preview and export stay identical. On success `copyAll` sets a `copyNote` that renders as a visible + `aria-live` banner (contributing count + the Keep-Source-vs-Use-Destination paste guidance); `renderPivotTree` escapes all user-derived text (`& < >`). The **Table** view (`GridTable`) shows the raw parsed Grid as an actual HTML table (as pasted, before restructuring) and the **JSON** view shows the same Grid as raw JSON — both instead of the rendered tree.
 
 **Persistence.** `PasteInput` memoizes a `SessionSnapshot` (`{tables, levelStyles, bodyFont, indentInput, headingStyleName, titleInput, activeId}`) and writes it to `localStorage` via `lib/persistence.ts` (versioned envelope) — debounced 400ms, plus a synchronous flush on `pagehide`/`visibilitychange` — and rehydrates once on mount behind a `hydrated` gate (re-seeding the `idRef` id counter past the largest restored id, so the first client render matches the empty server render and there’s no hydration mismatch). It is local-only; nothing is uploaded. **Remove section / Clear all** stash an undo snapshot; **paste-anywhere** is a window `paste` listener (`ingestClipboard`) that ingests unless a text field is focused; **Try an example** injects `makeExampleTable`. `newTable(id, grid)` in `components/tableModel.ts` is the one default-`TableState` factory shared by paste and the example.
 
@@ -73,10 +73,12 @@ flowchart TD
     PV["rowsToPivotTree(pivotLevels, sortDirs) -> PivotNode[]"]
     RP["renderPivotTree(tree, title?, markers, fieldLabels, breakAfter, numbering, headingLevels, titleLevel) -> HTML fragment"]
     P["RenderedPreview (live)"]
-    J["JsonPreview (raw Grid)"]
+    GT["GridTable (raw Grid as table)"]
+    J["JsonPreview (raw Grid as JSON)"]
     W["buildWordHtml + htmlToPlainText"]
     X["navigator.clipboard.write -> paste into Word"]
     A --> B --> C --> PV --> RP --> P
+    C -.-> GT
     C -.-> J
     RP --> W --> X
 ```

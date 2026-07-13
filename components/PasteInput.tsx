@@ -21,6 +21,7 @@ import { TableCard, FONTS, type TitleInput } from "./TableCard";
 import { SectionsRail } from "./SectionsRail";
 import { Popover } from "./Popover";
 import { RenderedPreview } from "./RenderedPreview";
+import { GridTable } from "./GridTable";
 import { JsonPreview } from "./JsonPreview";
 
 const MAX_TABLES = 100;
@@ -73,7 +74,7 @@ export function PasteInput() {
   const [copyAllState, setCopyAllState] = useState<"idle" | "copied" | "error">(
     "idle",
   );
-  const [view, setView] = useState<"rendered" | "json">("rendered");
+  const [view, setView] = useState<"rendered" | "table" | "json">("rendered");
   // Preview scope: the ACTIVE section (focused editing) or ALL sections stacked
   // exactly as Copy all emits them (the actual deliverable).
   const [previewScope, setPreviewScope] = useState<"active" | "all">("active");
@@ -825,30 +826,32 @@ export function PasteInput() {
         <section className="flex w-[38%] min-w-80 shrink-0 flex-col overflow-hidden border-l border-border">
           <div className="flex items-center gap-2 border-b border-border bg-surface px-2.5 py-1.5">
             <div className="inline-flex gap-0.5 rounded bg-surface-alt p-0.5 text-xs">
-              <button
-                type="button"
-                aria-pressed={view === "rendered"}
-                onClick={() => setView("rendered")}
-                className={`rounded px-2.5 py-1 font-semibold transition-colors ${
-                  view === "rendered"
-                    ? "bg-surface text-foreground shadow-[var(--shadow-2)]"
-                    : "text-text-secondary hover:text-foreground"
-                }`}
-              >
-                Preview
-              </button>
-              <button
-                type="button"
-                aria-pressed={view === "json"}
-                onClick={() => setView("json")}
-                className={`rounded px-2.5 py-1 font-semibold transition-colors ${
-                  view === "json"
-                    ? "bg-surface text-foreground shadow-[var(--shadow-2)]"
-                    : "text-text-secondary hover:text-foreground"
-                }`}
-              >
-                JSON
-              </button>
+              {(
+                [
+                  { key: "rendered", label: "Preview" },
+                  { key: "table", label: "Table" },
+                  { key: "json", label: "JSON" },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  aria-pressed={view === t.key}
+                  onClick={() => setView(t.key)}
+                  title={
+                    t.key === "table"
+                      ? "The pasted table, as-is (before the outline)"
+                      : undefined
+                  }
+                  className={`rounded px-2.5 py-1 font-semibold transition-colors ${
+                    view === t.key
+                      ? "bg-surface text-foreground shadow-[var(--shadow-2)]"
+                      : "text-text-secondary hover:text-foreground"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
             {/* Scope toggle — only meaningful for the rendered preview with >1
                 section: focus on the active one, or see the full stacked doc. */}
@@ -886,7 +889,19 @@ export function PasteInput() {
             {view === "json" ? (
               activeTable ? (
                 <JsonPreview grid={activeTable.grid} />
-              ) : null
+              ) : (
+                <p className="text-sm text-foreground/60">
+                  Paste a table to inspect its raw data here.
+                </p>
+              )
+            ) : view === "table" ? (
+              activeTable ? (
+                <GridTable grid={activeTable.grid} />
+              ) : (
+                <p className="text-sm text-foreground/60">
+                  Paste a table to see it here, exactly as it came from Excel.
+                </p>
+              )
             ) : previewScope === "all" && tables.length > 1 ? (
               <RenderedPreview
                 sections={sectionHtmls}

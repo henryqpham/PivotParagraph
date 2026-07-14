@@ -27,9 +27,9 @@ UI is a 4-pane IDE layout: top command band (⚙ Document popover — global bod
 ## Architecture (file map — details in docs/ARCHITECTURE.md)
 Pipeline per table: paste → `parseClipboard` (Grid) → `rowsToPivotTree` (`PivotNode[]`) → `renderPivotTree` (HTML fragment) → live preview + `buildWordHtml` clipboard write. `tableToHtml` is the single source for both preview and export.
 - `app/page.tsx` — mounts the full-height `PasteInput` shell
-- `components/PasteInput.tsx` — app shell + parent state: `tables[]`, shared level/title styles, active preview + view toggle, persistence, undo/redo, reorder/duplicate, copy confirmation, onboarding, paste-anywhere
+- `components/PasteInput.tsx` — app shell + parent state: `tables[]`, shared level/title styles, active preview + view toggle, persistence, undo/redo, reorder/duplicate, copy confirmation, onboarding, paste-anywhere, Ctrl+Enter copy, arrangement-reuse offer (`headerSignature` match on ingest)
 - `components/SectionsRail.tsx` — left rail (select / drag + keyboard reorder / duplicate / remove)
-- `components/TableCard.tsx` — center builder: Section Header group (title text + Heading dropdown + shared title look) and Levels group (Add-fields pool, Structure tree with ◄ ► ▲ ▼ ✕ + label/sort toggles, Markers control + blank-line/page-break checkboxes, per-level matrix: Marker/Number, Word heading, Look columns)
+- `components/TableCard.tsx` — center builder: Section Header group (title text + Heading dropdown + shared title look) and Levels group (Add-fields pool, Structure tree with ◄ ► ▲ ▼ ✕ + label/sort toggles, Markers control + blank-line/page-break checkboxes, per-level matrix: Marker/Number (a "Word numbers" note on heading levels), Word heading + resulting H-number chip, Look columns)
 - `components/tableModel.ts` — `TableState`, `tableToHtml`, bucket helpers, `MAX_LEVELS = 9`, `dropEmptyColumns`, `bodyGrid`, `newTable`, example grid, `estimateSectionStats`, `LevelInput`/`DEFAULT_LEVEL`
 - `components/RenderedPreview.tsx` / `GridTable.tsx` / `JsonPreview.tsx` — right-pane views (rendered paper proxy / raw grid + Header-row select / raw JSON)
 - `components/Popover.tsx` — shared popover helper

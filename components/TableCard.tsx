@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo, useState } from "react";
+import { headingLevel } from "@/lib/clipboard";
 import { defaultMarker, type MarkerKind } from "@/lib/renderers";
 import { DEFAULT_FIELD_LABEL, type FieldLabel } from "@/lib/types";
 import { Popover } from "./Popover";
@@ -186,6 +187,14 @@ function TableCardInner({
   // Word export uses, so preview and paste stay in sync.
   const titleOffset = table.sectionTitle.trim() ? 1 : 0;
   const levelIdxForBucket = (b: number) => Math.min(8, b + titleOffset);
+  // The Word heading a checked level maps to: its depth offset by the TITLE's
+  // heading number — but only when a title is actually emitted (mirrors the
+  // renderer's `bodyHeadingBase = title ? titleLevel : 0`, clamped at 9). Shown as
+  // an H-number chip in the matrix so the mapping is visible, not guessed.
+  const headingBase = table.sectionTitle.trim()
+    ? headingLevel(headingStyleName)
+    : 0;
+  const headingKForBucket = (b: number) => Math.min(headingBase + b + 1, 9);
 
   // Field names come from the EFFECTIVE header row (bodyGrid honors a header offset
   // set in the Table view), so skipping banner rows renames the fields everywhere.
@@ -720,6 +729,8 @@ function TableCardInner({
                         const label = headers[bucket[0]] || `Level ${i + 1}`;
                         const idx = levelIdxForBucket(i);
                         const lv = appearance.levelStyles[idx] ?? DEFAULT_LEVEL;
+                        const isHeading = table.headingLevels[i] === true;
+                        const headingK = headingKForBucket(i);
                         return (
                           <div
                             key={i}
@@ -736,7 +747,17 @@ function TableCardInner({
                                 checkbox in "multilevel" mode. */}
                             {table.numbering.mode !== "off" && (
                               <div className="w-32 shrink-0">
-                                {table.numbering.mode === "multilevel" ? (
+                                {isHeading ? (
+                                  // A Word-heading level's own marker/number is
+                                  // suppressed (Word numbers those rows on paste),
+                                  // so an active-looking control here would lie.
+                                  <span
+                                    className="block truncate text-xs italic text-muted"
+                                    title="Word supplies this level's number on paste — the app marker/number is suppressed"
+                                  >
+                                    Word numbers
+                                  </span>
+                                ) : table.numbering.mode === "multilevel" ? (
                                 <label className="flex items-center gap-1.5 text-xs text-text-secondary">
                                   <input
                                     type="checkbox"
@@ -776,21 +797,35 @@ function TableCardInner({
                               )}
                               </div>
                             )}
-                            {/* Word heading */}
-                            <div className="flex w-14 shrink-0 justify-center">
+                            {/* Word heading: checkbox + the RESULTING heading
+                                number as a chip (H2 under a Heading-1 title, etc.)
+                                so the mapping is visible at a glance. */}
+                            <label className="flex w-14 shrink-0 items-center justify-center gap-1">
                               <input
                                 type="checkbox"
-                                checked={table.headingLevels[i] === true}
+                                checked={isHeading}
                                 onChange={(e) => {
                                   const next = [...table.headingLevels];
                                   next[i] = e.target.checked;
                                   onChange({ headingLevels: next });
                                 }}
-                                aria-label={`Make level ${i + 1} a Word heading`}
-                                title="Map to a Word heading (Navigation pane, collapsible)"
+                                aria-label={
+                                  isHeading
+                                    ? `${label} maps to Word Heading ${headingK} — uncheck to make it body text`
+                                    : `Map ${label} to Word Heading ${headingK} (Navigation pane, collapsible)`
+                                }
+                                title={`Maps to Word "Heading ${headingK}" (Navigation pane, collapsible)`}
                                 className="accent-[var(--accent)]"
                               />
-                            </div>
+                              {isHeading && (
+                                <span
+                                  className="rounded-sm bg-accent-subtle px-1 text-[10px] font-semibold tabular-nums text-accent-text"
+                                  title={`Pastes as Word "Heading ${headingK}"`}
+                                >
+                                  H{headingK}
+                                </span>
+                              )}
+                            </label>
                             {/* Look (GLOBAL — all tables): color swatch inline +
                                 font/size/bold in a popover. Tinted so the
                                 this-section vs all-tables boundary stays obvious. */}

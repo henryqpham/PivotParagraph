@@ -22,6 +22,7 @@ import {
   makeExampleTable,
   estimateSectionStats,
   dropEmptyColumns,
+  bodyGrid,
   DEFAULT_LEVEL,
   type LevelInput,
   type TableState,
@@ -62,6 +63,25 @@ type CopyNote =
   | { status: "ok"; hasHeading: boolean }
   | { status: "empty" }
   | { status: "error" };
+
+/**
+ * A just-pasted section whose headers match an existing arranged section — offered
+ * a one-click "reuse that arrangement" (the duplicate-section workflow's root
+ * need: same table shape, new month's data).
+ */
+type ArrangeHint = { targetId: string; sourceId: string };
+
+/**
+ * A grid's effective-header signature: the trimmed, case-insensitive header names
+ * in order. Two sections with the same signature are "the same table shape", so
+ * one's arrangement (levels/markers/headings/labels/sort) can be reapplied to the
+ * other. Order-sensitive on purpose — the arrangement is column-indexed.
+ */
+function headerSignature(headerRow: readonly unknown[] | undefined): string {
+  return JSON.stringify(
+    (headerRow ?? []).map((c) => String(c ?? "").trim().toLowerCase()),
+  );
+}
 
 // Full workspace undo/redo history. The oldest step silently drops once the cap is
 // hit; a burst of rapid edits (typing, dragging a color) coalesces into ONE step
@@ -107,6 +127,9 @@ export function PasteInput() {
   const [showDoc, setShowDoc] = useState(false);
   // Post-copy confirmation + Word-paste guidance (persists until the next edit).
   const [copyNote, setCopyNote] = useState<CopyNote | null>(null);
+  // A just-pasted section whose headers match an arranged section (offer to reuse
+  // that section's arrangement). Cleared on apply/dismiss or the next paste.
+  const [arrangeHint, setArrangeHint] = useState<ArrangeHint | null>(null);
   // Two-step guard on the destructive "Clear all".
   const [confirmClear, setConfirmClear] = useState(false);
   // Full workspace undo/redo history (session-only, never persisted). Rather than
@@ -428,9 +451,20 @@ export function PasteInput() {
     const id = `t${++idRef.current}`;
     // Strip fully-empty spacer/padding columns on the way in so they never clutter
     // the Add-fields pool (automatic, no UI).
-    setTables((prev) => [...prev, newTable(id, dropEmptyColumns(grid))]);
+    const cleaned = dropEmptyColumns(grid);
+    setTables((prev) => [...prev, newTable(id, cleaned)]);
     setActiveId(id);
     setError(null);
+    // Same table shape as an already-arranged section (matching effective header
+    // names)? Offer to reuse its arrangement instead of rebuilding it by hand.
+    const sig = cleaned[0]?.length ? headerSignature(cleaned[0]) : null;
+    const src = sig
+      ? tables.find(
+          (t) =>
+            t.pivotLevels.length > 0 && headerSignature(bodyGrid(t)[0]) === sig,
+        )
+      : undefined;
+    setArrangeHint(src ? { targetId: id, sourceId: src.id } : null);
     setStatus(`Added section ${tables.length + 1}.`);
     return true;
   }
@@ -492,6 +526,30 @@ export function PasteInput() {
     }
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
+  }, []);
+
+  // Copy-anywhere: Ctrl/Cmd+Enter copies the active section — the mouse-free way
+  // OUT, pairing with paste-anywhere as the mouse-free way IN. Same latest-handler
+  // ref pattern so the listener mounts once. (copySection is a hoisted function
+  // declaration, so referencing it here is safe.)
+  const copyShortcutRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    copyShortcutRef.current = () => void copySection();
+  });
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (
+        e.key === "Enter" &&
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        copyShortcutRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   function patchTable(id: string, patch: Partial<TableState>) {
@@ -675,6 +733,38 @@ export function PasteInput() {
     });
     setActiveId(newId);
     setStatus("Section duplicated.");
+  }
+
+  // Reapply the matching section's arrangement to the just-pasted one: the
+  // column-indexed structure (levels/labels/sort — valid because the header
+  // signatures matched, so the columns line up) plus the per-table settings.
+  // Never the grid, the title, or the header offset (the new paste may not have
+  // the old banner rows); global styles aren't per-table at all. structuredClone
+  // so the two sections share no references. One clean undo step.
+  function applyArrangement() {
+    if (!arrangeHint) return;
+    const src = tables.find((t) => t.id === arrangeHint.sourceId);
+    if (!src || !tables.some((t) => t.id === arrangeHint.targetId)) {
+      setArrangeHint(null);
+      return;
+    }
+    setCopyNote(null);
+    commitPending();
+    const cfg = structuredClone({
+      pivotLevels: src.pivotLevels,
+      markers: src.markers,
+      fieldLabels: src.fieldLabels,
+      sortDirs: src.sortDirs,
+      breakAfter: src.breakAfter,
+      numbering: src.numbering,
+      headingLevels: src.headingLevels,
+      pageBreakBefore: src.pageBreakBefore ?? false,
+    });
+    setTables((ts) =>
+      ts.map((t) => (t.id === arrangeHint.targetId ? { ...t, ...cfg } : t)),
+    );
+    setArrangeHint(null);
+    setStatus("Arrangement applied. Undo available (Ctrl+Z).");
   }
 
   function removeTable(id: string) {
@@ -866,13 +956,11 @@ export function PasteInput() {
             </kbd>{" "}
             {copyNote.hasHeading ? (
               <>
-                → choose <strong>Use Destination Styles</strong> so the heading
-                rows take your document&apos;s real Heading styles (Navigation
-                pane + the template&apos;s numbering), or{" "}
-                <strong>Keep Source Formatting</strong> to keep this exact
-                preview look (heading rows stay bold + in the Navigation pane,
-                but skip the document&apos;s Heading styles). Avoid{" "}
-                <em>Merge Formatting</em> — it strips the heading mapping.
+                → <strong>Use Destination Styles</strong>{" "}= your
+                document&apos;s real Heading styles (Navigation pane +
+                numbering); <strong>Keep Source Formatting</strong>{" "}= this
+                exact preview look. Avoid <em>Merge Formatting</em>{" "}(strips
+                the heading mapping).
               </>
             ) : (
               <>
@@ -904,11 +992,50 @@ export function PasteInput() {
     </p>
   );
 
+  // One-click reuse of a matching section's arrangement for a just-pasted table.
+  // Rendered with guards (either section may have been removed/undone since the
+  // paste), announced politely, dismissible.
+  const arrangeBanner = (() => {
+    if (!arrangeHint) return null;
+    const srcIdx = tables.findIndex((t) => t.id === arrangeHint.sourceId);
+    const src = srcIdx >= 0 ? tables[srcIdx] : undefined;
+    if (!src || !tables.some((t) => t.id === arrangeHint.targetId)) return null;
+    const name = src.sectionTitle.trim() || `Table ${srcIdx + 1}`;
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-3 rounded border border-[color:color-mix(in_srgb,var(--accent)_35%,transparent)] bg-accent-subtle px-4 py-2 text-sm text-foreground"
+      >
+        <span className="min-w-0 flex-1">
+          This table&apos;s headers match <strong>{name}</strong> — reuse its
+          arrangement (levels, markers, headings, sort)?
+        </span>
+        <button
+          type="button"
+          onClick={applyArrangement}
+          className="h-7 shrink-0 rounded border border-accent px-2.5 text-sm font-semibold text-accent-text transition-colors hover:bg-accent hover:text-accent-fg"
+        >
+          Use arrangement
+        </button>
+        <button
+          type="button"
+          onClick={() => setArrangeHint(null)}
+          aria-label="Dismiss arrangement suggestion"
+          className="shrink-0 leading-none text-muted transition-colors hover:text-foreground"
+        >
+          &times;
+        </button>
+      </div>
+    );
+  })();
+
   const notifications =
-    errorBanner || copyBanner ? (
+    errorBanner || copyBanner || arrangeBanner ? (
       <div className="flex flex-col gap-2 px-4 pt-3">
         {errorBanner}
         {copyBanner}
+        {arrangeBanner}
       </div>
     ) : null;
 
@@ -930,9 +1057,15 @@ export function PasteInput() {
             </span>
             <h1 className="text-sm">Excel &rarr; Word</h1>
           </span>
-          <span className="text-xs text-muted">
-            {tables.length} of {MAX_TABLES} sections
-          </span>
+          {/* Plain count, not pagination; surface the 100-section cap only when
+              it's actually close enough to matter. */}
+          {tables.length > 0 && (
+            <span className="text-xs text-muted">
+              {tables.length >= MAX_TABLES - 10
+                ? `${tables.length} of ${MAX_TABLES} sections`
+                : `${tables.length} section${tables.length === 1 ? "" : "s"}`}
+            </span>
+          )}
           {/* Undo/Redo — persistent toolbar buttons covering EVERY workspace change
               (reorder, fonts, bold, indent, markers, title, add/remove, clear,
               import). Disabled + greyed out when there's nothing to undo/redo. Kept
@@ -1092,7 +1225,7 @@ export function PasteInput() {
               type="button"
               onClick={copySection}
               disabled={!activeTable}
-              title="Copies the active section as its own Word doc, ready to paste."
+              title="Copies the active section as its own Word doc, ready to paste (Ctrl+Enter)"
               className={BTN_PRIMARY}
             >
               {copyState === "copied"

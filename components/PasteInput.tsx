@@ -864,16 +864,22 @@ export function PasteInput() {
             <kbd className="rounded border border-border-strong px-1 py-0.5 font-mono text-[11px]">
               V
             </kbd>{" "}
-            → choose <strong>Keep Source Formatting</strong> to keep this exact
-            look
             {copyNote.hasHeading ? (
               <>
-                , or <strong>Use Destination Styles</strong>{" "}
-                to adopt the template&apos;s heading (those rows join the
-                Navigation pane)
+                → choose <strong>Use Destination Styles</strong> so the heading
+                rows take your document&apos;s real Heading styles (Navigation
+                pane + the template&apos;s numbering), or{" "}
+                <strong>Keep Source Formatting</strong> to keep this exact
+                preview look (heading rows stay bold + in the Navigation pane,
+                but skip the document&apos;s Heading styles). Avoid{" "}
+                <em>Merge Formatting</em> — it strips the heading mapping.
               </>
-            ) : null}
-            .
+            ) : (
+              <>
+                → choose <strong>Keep Source Formatting</strong> to keep this
+                exact look.
+              </>
+            )}
           </span>
         )}
       </div>

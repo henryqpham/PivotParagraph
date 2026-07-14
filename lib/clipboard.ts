@@ -1,8 +1,9 @@
 // Word-output step: wrap the renderer's HTML fragment as Word-flavored HTML for
-// the clipboard ("Copy all"). The title maps to a destination Heading style
-// when a Heading style is named (so a "Use Destination Styles" paste adopts the
-// document's heading); every body paragraph is plain, directly-formatted text
-// (any multilevel numbers are already plain text in the fragment). renderPivotTree
+// the clipboard ("Copy section"). The title and any heading-marked body levels map
+// to destination Heading styles as real <h1>-<h6> elements whose style rules
+// declare the full source look (see buildWordHtml for the verified paste-mode
+// mechanics); every other body paragraph is plain, directly-formatted text (any
+// multilevel numbers are already plain text in the fragment). renderPivotTree
 // returns a bare fragment (no <html>/<head>/<body>); the browser's ClipboardItem
 // writes the Windows CF_HTML header for us.
 
@@ -18,16 +19,6 @@ export type LevelStyle = {
   bold: boolean;
 };
 
-/**
- * The single styling source, shared across all tables.
- * - `levels` -- per-depth direct look (index 0 = level 1). Always used for the
- *   body (nested rows), and for the title when `headingStyleName` is blank.
- * - `indentStep` -- left-indent added per nesting level (inches).
- * - `headingStyleName` -- optional Word style name for the TITLE only. When set,
- *   the title gets `mso-style-name:"<headingStyleName>"`, so a "Use Destination
- *   Styles" paste adopts the destination document's heading style. Blank =
- *   the app's direct level-1 look. The body is always the app's direct look.
- */
 /**
  * The title's own direct look (font/size/color + bold/italic/underline), SHARED
  * across tables. Drives the `ws-title` row's APPEARANCE in BOTH cases: with no
@@ -47,6 +38,20 @@ export type TitleStyle = {
   underline: boolean;
 };
 
+/**
+ * The single styling source, shared across all tables.
+ * - `levels` -- per-depth direct look (index 0 = level 1). Styles the plain body
+ *   rows inline, and is the look a heading-marked level's style rule declares.
+ * - `indentStep` -- left-indent added per nesting level (inches).
+ * - `headingStyleName` -- optional Word style name for the TITLE ("" = None). A
+ *   built-in "Heading 1-6" (all the dropdown offers) is emitted as a real `<hN>`
+ *   element so the paste maps it to the destination document's heading style
+ *   (see buildWordHtml for the verified paste-mode mechanics); any other name
+ *   falls back to the `p.MsoTitle` + `mso-style-name` class route. Blank = the
+ *   title's own direct `titleStyle` look. Body levels the user marks as Word
+ *   headings map the same way (`data-heading` -> `<hK>`); every other body row
+ *   is the app's direct inline look.
+ */
 export type HeadingStyle = {
   levels: LevelStyle[];
   indentStep: number; // inches of left-indent per nesting level
@@ -65,16 +70,6 @@ export type HeadingStyle = {
  */
 function sanitizeStyleName(s: string): string {
   return s.replace(/[^A-Za-z0-9 .-]/g, "").trim();
-}
-
-/**
- * Whether a Heading style is configured for the title (a non-empty name after
- * sanitizing). A body level mapped to a Word heading nests one level under the
- * title's `Heading 1`, so callers pass this the same boolean the title mapping
- * branches on (it sets the body heading level: title Heading 1 → body Heading 2).
- */
-export function isHeadingStyleSet(name: string): boolean {
-  return sanitizeStyleName(name) !== "";
 }
 
 /**
@@ -114,17 +109,46 @@ const FALLBACK_TITLE: TitleStyle = {
  * Wrap a rendered pivot fragment as a minimal Word-flavored HTML document for the
  * clipboard.
  *
- * The TITLE maps to a Word heading style when `headingStyleName` is set (it
- * carries `mso-style-name:"<name>";mso-outline-level:<N>` for the chosen Heading N,
- * so a "Use Destination Styles" paste puts it in the document outline and Word
- * supplies its heading NUMBER), while the user's full title Look (font/size/color +
- * bold/italic/underline) is emitted as inline direct formatting so the appearance
- * pastes exactly as previewed; blank = the same direct look on a plain paragraph.
+ * HEADING MAPPING — real `<h1>`–`<h6>` ELEMENTS whose `<style>` rule declares the
+ * FULL source look (verified empirically against desktop Word via COM paste
+ * tests, July 2026). The mechanics that matter:
+ * - A "Use Destination Styles" (or default Ctrl+V) paste maps `<hK>` to the
+ *   built-in `Heading K` in a blank doc AND a template (where an alias like
+ *   "1.0 HEADING" still resolves). Everything DECLARED IN THE `hK` CSS RULE is
+ *   treated as the SOURCE STYLE'S DEFINITION and is swapped wholesale for the
+ *   destination style — clean adoption, no direct-formatting residue. Anything
+ *   NOT declared in the rule falls back to Word's HTML-reader h-defaults and
+ *   rides along as DIRECT formatting that pollutes the destination heading
+ *   (a bare `<h1>` pastes as Heading 1 + direct bold 24pt). So each emitted
+ *   `<hK>` gets a rule declaring `mso-style-name`/`mso-outline-level` PLUS the
+ *   level's font/size/color and bold — making the paste adopt the destination
+ *   heading exactly.
+ * - A "Keep Source Formatting" paste does NOT map named styles at all (the row
+ *   lands as Normal + `mso-outline-level` direct formatting — it still shows in
+ *   the Navigation pane, which deceptively half-works). There the declared rule
+ *   look IS the visible formatting, so declaring the preview's heading look
+ *   (level font/size/color, bold, flush-left) makes a KSF paste read as a real
+ *   bold heading instead of naked body text.
+ * - "Merge Formatting" strips both the style mapping and the outline level;
+ *   nothing can survive it. The copy-confirmation banner steers users to the
+ *   other two options.
+ *
+ * The TITLE maps this way too when `headingStyleName` is a built-in "Heading 1–6"
+ * (all the dropdown offers): it becomes `<hN>` so the paste puts it in the
+ * document outline and Word supplies its heading NUMBER, while the user's full
+ * title Look (font/size/color + bold/italic/underline) is emitted as inline
+ * direct formatting so the appearance pastes exactly as previewed. Any OTHER
+ * non-empty style name keeps the legacy `<p class="MsoTitle">` +
+ * `mso-style-name:"<name>"` route (a custom name has no tag equivalent; it maps
+ * on a Use-Destination-Styles paste); blank = the same direct look on a plain
+ * paragraph.
  *
  * A body level the user mapped to a Word heading arrives as `data-heading="K"` and
- * becomes `<p class="MsoHeadingK">` + a `mso-style-name:"Heading K"` rule, so a
- * "Use Destination Styles" paste adds just those rows to the document outline (nav
- * pane + collapsible) and Word supplies their number.
+ * becomes `<hK>` (K ≤ 6), so the paste adds just those rows to the document
+ * outline (nav pane + collapsible) and Word supplies their number. K 7–9 (no HTML
+ * tag exists) keep `<p class="MsoHeadingK">` with the same rule declarations —
+ * the class route maps on the same Use-Destination-Styles/default pastes (and,
+ * like the tag route, never under Keep Source Formatting).
  *
  * Every OTHER body paragraph uses the app's direct per-level look
  * (color/font/size/bold) + indent + compact spacing, emitted as INLINE formatting
@@ -205,20 +229,50 @@ export function buildWordHtml(
     return h;
   };
 
-  // Body heading levels seen on `data-heading="K"` rows (levels the user mapped to
-  // a Word heading for nav + collapsibility); each gets a mapped-style rule below.
-  const bodyHeadings = new Set<number>();
+  // The title maps to a real <hN> element only for a built-in "Heading 1"–"Heading
+  // 6" name (all the dropdown offers); a real tag is what maps reliably in every
+  // paste mode and document (see the function comment). Any other non-empty name
+  // has no tag equivalent and keeps the p.MsoTitle route.
+  const titleTagLevel = /^heading [1-6]$/i.test(headingName) ? titleLevel : 0;
+  // The look a heading rule declares as its "source style definition": character
+  // props only (color/font/size + bold). Declared props are REPLACED by the
+  // destination style on a Use-Destination-Styles/default paste (clean adoption —
+  // undeclared props would instead ride along as polluting direct formatting) and
+  // ARE the visible look on a Keep-Source-Formatting paste (matching the preview's
+  // bold heading rows). No paragraph props: Word supplies the destination
+  // heading's spacing when mapped, its h-defaults under KSF.
+  type HeadingLook = { color: string; font: string; size: number };
+  // Heading levels emitted as real <hN> tags (title + body) and body levels 7–9
+  // (no HTML tag exists; class route). Each K records the look its rule declares.
+  const tagHeadings = new Map<number, HeadingLook>();
+  const classHeadings = new Map<number, HeadingLook>();
+  let titleUsesClassRoute = false; // saw a title mapped to a NON-built-in name
   const body = fragment
-    // Title: a mapped Word heading (class + mso rule) when named, else the app's
-    // direct level-1 look inline.
-    .replace(/<p class="ws-title">([\s\S]*?)<\/p>/g, (_m, content: string) =>
-      headingName
-        ? `<p class="MsoTitle">${wrapTitleOnHeading(content)}</p>`
-        : `<p style="${titleStyleAttr}">${wrapTitle(content)}</p>`,
-    )
+    // Title: a mapped Word heading when named (<hN> for a built-in Heading 1–6,
+    // else the legacy class + mso rule), else the app's direct look inline.
+    .replace(/<p class="ws-title">([\s\S]*?)<\/p>/g, (_m, content: string) => {
+      if (!headingName)
+        return `<p style="${titleStyleAttr}">${wrapTitle(content)}</p>`;
+      if (titleTagLevel) {
+        // The rule declares the title's own look; the inline span in
+        // wrapTitleOnHeading overrides the text run either way, so this only
+        // shapes the paragraph fallback under KSF.
+        tagHeadings.set(titleTagLevel, {
+          color: ts.color,
+          font: ts.font,
+          size: ts.size,
+        });
+        return `<h${titleTagLevel}>${wrapTitleOnHeading(content)}</h${titleTagLevel}>`;
+      }
+      titleUsesClassRoute = true;
+      return `<p class="MsoTitle">${wrapTitleOnHeading(content)}</p>`;
+    })
     // Nested rows. A `data-heading="K"` line is a level mapped to a Word heading:
-    // map it to the destination "Heading K" style so a Use-Destination-Styles paste
-    // adds it to the outline (nav + collapsible) and Word supplies its number.
+    // emit it as a real <hK> (K ≤ 6) so the paste maps it to the destination
+    // "Heading K" style — blank doc or template — adding it to the outline (nav +
+    // collapsible) with Word supplying its number; K 7–9 keep the class + mso rule
+    // (no tag exists that deep). Its rule declares the LEVEL's look (the same look
+    // the preview shows for a heading row), keyed by the row's data-level.
     // Otherwise the app's per-level look, inline (+ <b> when bold). An optional
     // `data-break` attribute (a top-level group starting a new page) adds
     // `page-break-before:always` to whichever paragraph it lands on; the spacer
@@ -234,37 +288,62 @@ export function buildWordHtml(
         content: string,
       ) => {
         const pageBreak = brk ? "page-break-before:always" : "";
+        const i = Number(d) - 1;
         if (h) {
           const k = Number(h);
-          bodyHeadings.add(k);
-          // A mapped heading keeps its class/mso rule; the page break is added as
-          // inline direct formatting (survives a Use-Destination-Styles paste).
+          const s = lvl(i);
+          const look = { color: s.color, font: s.font, size: s.size };
+          // The page break is added as inline direct formatting (survives a
+          // Use-Destination-Styles paste).
           const style = pageBreak ? ` style="${pageBreak}"` : "";
+          if (k <= 6) {
+            if (!tagHeadings.has(k)) tagHeadings.set(k, look);
+            return `<h${k}${style}>${content}</h${k}>`;
+          }
+          if (!classHeadings.has(k)) classHeadings.set(k, look);
           return `<p class="MsoHeading${k}"${style}>${content}</p>`;
         }
-        const i = Number(d) - 1;
         const base = directStyle(i, Number(d));
         const style = pageBreak ? `${base};${pageBreak}` : base;
         return `<p style="${style}">${wrapBold(i, content)}</p>`;
       },
     );
 
-  // Mapped-style rules: the title (when named) + each body heading level seen.
-  // Every plain body level is inline, so it needs no rule.
-  const titleRule = headingName
+  // Mapped-style rules: one per heading level actually used. Each declares the
+  // style identity (mso-style-name + mso-outline-level) AND the full source look
+  // (color/font/size + bold — bold because the preview shows heading rows bold),
+  // so a mapping paste adopts the destination heading cleanly and a KSF paste
+  // shows a real heading look (see the function comment). The class rules
+  // (custom-named title, Heading 7–9) are the only mapping those routes have.
+  // Emitted only for what the fragment actually used, so e.g. a blank title adds
+  // no stray rule. Every plain body level is inline and needs no rule.
+  const headingRule = (sel: string, k: number, s: HeadingLook) =>
+    `${sel}{mso-style-name:"Heading ${k}";mso-outline-level:${k};` +
+    `color:${s.color};font-family:'${s.font}';font-size:${s.size}pt;font-weight:bold}`;
+  const titleRule = titleUsesClassRoute
     ? `p.MsoTitle{mso-style-name:"${headingName}";mso-outline-level:${titleLevel}}`
     : "";
-  const headingRules = Array.from(bodyHeadings)
-    .map(
-      (k) =>
-        `p.MsoHeading${k}{mso-style-name:"Heading ${k}";mso-outline-level:${k}}`,
-    )
-    .join("");
+  const headingRules =
+    Array.from(tagHeadings)
+      .map(([k, s]) => headingRule(`h${k}`, k, s))
+      .join("") +
+    Array.from(classHeadings)
+      .map(([k, s]) => headingRule(`p.MsoHeading${k}`, k, s))
+      .join("");
   return (
     `<html xmlns:o="urn:schemas-microsoft-com:office:office" ` +
     `xmlns:w="urn:schemas-microsoft-com:office:word" ` +
     `xmlns="http://www.w3.org/TR/REC-html40">` +
     `<head><meta charset="utf-8">` +
+    // The ProgId/Generator/Originator metas are what Word's own clipboard writer
+    // emits; they mark the payload as WORD-DOCUMENT content rather than generic
+    // web HTML, so Word offers its between-documents paste options (incl. "Use
+    // Destination Styles") instead of the other-program set — without them a
+    // blank destination (no conflicting in-use styles) may only offer Keep
+    // Source / Merge.
+    `<meta name="ProgId" content="Word.Document">` +
+    `<meta name="Generator" content="Microsoft Word 15">` +
+    `<meta name="Originator" content="Microsoft Word 15">` +
     `<style>` +
     `@page{size:8.5in 11in;margin:1in}` +
     // Body font fallback (so Word doesn't drop to Times New Roman); each paragraph

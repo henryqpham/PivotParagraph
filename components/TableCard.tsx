@@ -147,6 +147,9 @@ function GuideCell({ kind }: { kind: "line" | "tee" | "corner" | "blank" }) {
 type AppearanceControls = {
   levelStyles: LevelInput[];
   onLevelChange: (i: number, patch: Partial<LevelInput>) => void;
+  /** The document-wide Body font — what an unpinned level's font ("" = inherit)
+   *  resolves to, shown in the Look popover's "Body font (…)" option. */
+  bodyFont: string;
 };
 
 type Props = {
@@ -925,6 +928,10 @@ function TableCardInner({
                                   </div>
                                   <label className="flex items-center justify-between gap-3">
                                     Font
+                                    {/* "" = inherit the document-wide Body font
+                                        (the default); picking a font PINS this
+                                        level, mirroring the heading-rank
+                                        Auto/pin pattern. */}
                                     <select
                                       value={lv.font}
                                       onChange={(e) =>
@@ -932,9 +939,12 @@ function TableCardInner({
                                           font: e.target.value,
                                         })
                                       }
-                                      aria-label={`${label} font`}
+                                      aria-label={`${label} font (empty = the document Body font)`}
                                       className={FIELD}
                                     >
+                                      <option value="">
+                                        Body font ({appearance.bodyFont})
+                                      </option>
                                       {FONTS.map((f) => (
                                         <option key={f} value={f}>
                                           {f}

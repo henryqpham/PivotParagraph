@@ -1,7 +1,7 @@
 @AGENTS.md
 # Excel → Word Pivot
 
-Client-side Next.js app: paste one or more Excel/Sheets tables; each is restructured into an Excel-pivot-style **nested outline** ("Rows area" — ordered indent levels, each holding ≥1 stacked fields; rows nest and merge by level), rendered as Word-ready HTML, and copied to the clipboard per section. Solves: wide tables don't fit an 8.5x11 Word page. The title and any heading-marked levels map to real Word Heading styles; all other body rows use the app's own inline per-level styling (Arial 11 default).
+Client-side Next.js app: paste one or more Excel/Sheets tables; each is restructured into an Excel-pivot-style **nested outline** ("Rows area" — ordered indent levels, each holding ≥1 stacked fields; rows nest and merge by level), rendered as Word-ready HTML, and copied to the clipboard per section. Solves: wide tables don't fit an 8.5x11 Word page. The title and any heading-marked levels map to real Word Heading styles; all other body rows use the app's own inline per-level styling (11pt black default, font inherited from the ⚙ Body font — Arial unless changed — with a per-level Look pin).
 
 UI is a 4-pane IDE layout: top command band (⚙ Document popover — global body font / indent / reset), left **Sections rail** (each table = its OWN standalone Word document; drag-reorder, ⧉ duplicate, ✕ remove), center builder, pinned right preview (Preview / Table / JSON). Export is per-section **Copy section** (clipboard only). Workspace auto-saves to `localStorage` (local-only); undo/redo; first-run onboarding + paste-anywhere.
 

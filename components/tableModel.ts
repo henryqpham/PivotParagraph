@@ -98,10 +98,14 @@ export type LevelInput = {
   sizeInput: string;
   bold: boolean;
 };
-/** Default look for an untouched level: plain Arial 11 black (matches a body). */
+/** Default look for an untouched level: 11pt black, font INHERITED from the
+ *  document-wide Body font ("" = inherit — the ⚙ Document popover's Body font
+ *  control would otherwise be a dead knob, since every paragraph carries an
+ *  inline per-level font that used to hard-default to Arial). A level's Look
+ *  popover can still PIN a specific font; "" un-pins back to Body font. */
 export const DEFAULT_LEVEL: LevelInput = {
   color: "#000000",
-  font: "Arial",
+  font: "",
   sizeInput: "11",
   bold: false,
 };

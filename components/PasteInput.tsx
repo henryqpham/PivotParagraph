@@ -382,7 +382,11 @@ export function PasteInput() {
       const ls = levelStyles[i];
       return {
         color: ls?.color ?? DEFAULT_LEVEL.color,
-        font: ls?.font ?? DEFAULT_LEVEL.font,
+        // "" / unset = INHERIT the document-wide Body font — this is what makes
+        // the ⚙ Document Body font control actually drive the body rows (both
+        // the preview rules and the pasted inline styles read these levels); a
+        // level's Look popover pins a specific font by setting a non-empty one.
+        font: ls?.font || bodyFont,
         size: clampPt(
           ls?.sizeInput ?? DEFAULT_LEVEL.sizeInput,
           parseInt(DEFAULT_LEVEL.sizeInput, 10),
@@ -407,7 +411,7 @@ export function PasteInput() {
         underline: titleInput.underline,
       },
     };
-  }, [levelStyles, indentInput, headingStyleName, titleInput]);
+  }, [levelStyles, indentInput, headingStyleName, titleInput, bodyFont]);
 
   function setLevel(i: number, patch: Partial<LevelInput>) {
     noteEdit();
@@ -1310,6 +1314,7 @@ export function PasteInput() {
                   appearance={{
                     levelStyles,
                     onLevelChange: setLevel,
+                    bodyFont,
                   }}
                 />
               )}

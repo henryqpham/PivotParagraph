@@ -29,9 +29,9 @@ Pipeline per table: paste → `parseClipboard` (Grid) → `rowsToPivotTree` (`Pi
 - `app/page.tsx` — mounts the full-height `PasteInput` shell
 - `components/PasteInput.tsx` — app shell + parent state: `tables[]`, shared level/title styles, active preview + view toggle, persistence, undo/redo, reorder/duplicate, copy confirmation, onboarding, paste-anywhere, Ctrl+Enter copy, arrangement-reuse offer (`headerSignature` match on ingest)
 - `components/SectionsRail.tsx` — left rail (select / drag + keyboard reorder / duplicate / remove)
-- `components/TableCard.tsx` — center builder: Section Header group (title text + Heading dropdown + shared title look) and Levels group (Add-fields pool, Structure tree with ◄ ► ▲ ▼ ✕ + label/sort toggles, Markers control + blank-line/page-break checkboxes, per-level matrix: Marker/Number (a "Word numbers" note on heading levels), Word heading + resulting H-number chip, Look columns)
+- `components/TableCard.tsx` — center builder: Section Header group (title text + Heading dropdown + shared title look) and Levels group (Add-fields pool, Structure tree with ◄ ► ▲ ▼ ✕ + label/sort toggles, Markers control + blank-line/page-break checkboxes, per-level matrix: Marker/Number (a "Word numbers" note on heading levels), Word heading + Auto/H1–H9 rank chip-dropdown, Look columns)
 - `components/tableModel.ts` — `TableState`, `tableToHtml`, bucket helpers, `MAX_LEVELS = 9`, `dropEmptyColumns`, `bodyGrid`, `newTable`, example grid, `estimateSectionStats`, `LevelInput`/`DEFAULT_LEVEL`
-- `components/RenderedPreview.tsx` / `GridTable.tsx` / `JsonPreview.tsx` — right-pane views (rendered paper proxy / raw grid + Header-row select / raw JSON)
+- `components/RenderedPreview.tsx` / `GridTable.tsx` / `JsonPreview.tsx` — right-pane views (rendered paper proxy / raw grid / raw JSON). The Header-row picker was removed by request; `headerRow?` remains a legacy field honored on read.
 - `components/Popover.tsx` — shared popover helper
 - `lib/types.ts` — `PivotNode`/`PivotLine`, `FieldLabel`, Grid types
 - `lib/parser.ts` — SheetJS clipboard → Grid
@@ -41,7 +41,7 @@ Pipeline per table: paste → `parseClipboard` (Grid) → `rowsToPivotTree` (`Pi
 - `lib/clipboard.ts` — `buildWordHtml` Word wrapper, `HeadingStyle`/`LevelStyle`/`TitleStyle`, `headingLevel`, `htmlToPlainText`
 
 ## Key invariants
-- Pivot structure: `pivotLevels: number[][]` — ordered indent buckets of grid columns; per-COLUMN `fieldLabels`/`sortDirs` (survive remove/re-add); per-TABLE `markers`/`breakAfter`/`numbering`/`headingLevels`; optional `headerRow?`/`pageBreakBefore?` — read via `?? default` so old sessions/imports stay compatible.
+- Pivot structure: `pivotLevels: number[][]` — ordered indent buckets of grid columns; per-COLUMN `fieldLabels`/`sortDirs` (survive remove/re-add); per-TABLE `markers`/`breakAfter`/`numbering`/`headingLevels`; optional `headerRow?`/`pageBreakBefore?`/`headingRanks?` (per-level Word-heading rank override, 1–9; 0/absent = auto — one rank under the previous heading, pins included, so only a pin can create a rank gap) — read via `?? default` so old sessions/imports stay compatible.
 - 9-level depth cap (`MAX_LEVELS`) is enforced end-to-end: builder stacks past it, renderer clamps `data-level`, preview has exactly 9 rules, `buildWordHtml` matches only 1–9.
 - Word heading mapping uses REAL `<h1>`–`<h6>` elements whose `<style>` rule declares the FULL source look (mso-style-name/outline-level + color/font/size/bold): declared props are cleanly REPLACED by the destination Heading style on a Use-Destination-Styles/default paste, undeclared ones ride along as polluting direct formatting; a Keep-Source-Formatting paste never maps named styles (rows land Normal + outline level = nav pane) and shows the declared look instead — verified empirically against desktop Word (COM paste matrix, July 2026). Every other body row gets INLINE direct formatting so it survives any paste. K 7–9 fall back to the Mso class rule.
 - Level styles are GLOBAL by depth — slot = `bucket + (sectionTitle ? 1 : 0)`, matching the renderer; Marker / Word-heading are per-table.

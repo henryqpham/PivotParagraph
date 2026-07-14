@@ -239,14 +239,20 @@ function multilevelNumbers(
  * and no collisions (see `multilevelNumbers`).
  *
  * HEADING ROWS (`headingLevels[depth-1]`): a level the user mapped to a Word
- * heading. Its FIRST line is tagged `data-heading="K"` (K = `titleLevel + depth`,
- * clamped 9 -- a body heading nests one under the TITLE's heading level, so under a
- * `Heading 1` title the top body heading is `Heading 2`, and under a `Heading 3`
- * title it is `Heading 4`; `titleLevel` is 0 when the title is not a heading) so
- * `buildWordHtml` maps it to the destination `Heading K` style (nav pane +
- * collapsible). The app's number/marker is SUPPRESSED on those rows (Word supplies
- * the number), but the number PATH still computes so deeper body rows still nest
- * (TYPE → Word "5.1", TITLE → app "5.1.1"). Usually just the top level or two.
+ * heading. Its FIRST line is tagged `data-heading="K"` so `buildWordHtml` maps it
+ * to the destination `Heading K` style (nav pane + collapsible). K is SEQUENTIAL
+ * by default: one rank under the PREVIOUS heading level — the title (counted only
+ * when a title is emitted; 0 when it is not a heading), then each heading-checked
+ * level in depth order, PINNED VALUES INCLUDED (clamped 9) — so checking levels 1
+ * and 4 gives H2 → H3 under a Heading-1 title (never a skipped H2 → H5 outline,
+ * which Word's accessibility checker flags), and pinning a level re-derives the
+ * autos beneath it (pin H1 → the next auto is H2). An explicit
+ * `headingRanks[depth-1]` (1–9; 0/absent = auto) OVERRIDES the rank for templates
+ * whose numbering keys off a specific heading (several levels may share one
+ * rank) — an explicit pin is the only way a rank gap can occur. The app's
+ * number/marker is SUPPRESSED on heading rows (Word supplies the number), but the
+ * number PATH still computes so deeper body rows still nest (TYPE → Word "5.1",
+ * TITLE → app "5.1.1"). Usually just the top level or two.
  *
  * BLANK LINE AFTER (`breakAfter[depth-1]`): after a node's WHOLE subtree, an
  * empty spacer paragraph (`<p ... data-level="N">&#160;</p>` -- a non-breaking
@@ -275,6 +281,7 @@ export function renderPivotTree(
   headingLevels: boolean[] = [],
   titleLevel = 0,
   pageBreakBefore = false,
+  headingRanks: number[] = [],
 ): string {
   const numbered = numbering.mode === "multilevel";
   // Precompute each numbered node's display number (transparent hidden levels, top
@@ -288,6 +295,24 @@ export function renderPivotTree(
   // whether a title exists; otherwise a top body heading becomes Heading 2 with no
   // Heading 1 title above it (an orphaned/malformed Word outline).
   const bodyHeadingBase = title ? titleLevel : 0;
+  // The Word heading each depth maps to, resolved once. AUTO = one rank under
+  // the PREVIOUS heading level (the title, then each checked level in order —
+  // pinned values included), so an auto level can never skip a rank and autos
+  // re-derive around any pin; an explicit headingRanks entry (1-9) overrides.
+  // Only consulted for heading-checked depths.
+  const headingKByDepth: number[] = [];
+  {
+    let prevK = bodyHeadingBase;
+    for (let d = 1; d <= 9; d++) {
+      const explicit = headingRanks[d - 1];
+      const k =
+        typeof explicit === "number" && explicit >= 1 && explicit <= 9
+          ? Math.floor(explicit)
+          : Math.min(Math.max(prevK + 1, 1), 9);
+      headingKByDepth[d - 1] = k;
+      if (headingLevels[d - 1] === true) prevK = k;
+    }
+  }
   const blocks: string[] = [];
   const walk = (list: PivotNode[], level: number, depth: number) => {
     const lvl = Math.min(level, 9);
@@ -295,9 +320,8 @@ export function renderPivotTree(
     // Heading rows: this level is mapped to a Word heading (nav + collapsible).
     // Word supplies its number, so the app's number/marker is suppressed on it; the
     // number PATH still computes (via numberOf), so deeper body rows nest correctly.
-    // headingK = the Word heading level (body nests one under a Heading-1 title).
     const isHeading = headingLevels[depth - 1] === true;
-    const headingK = Math.min(bodyHeadingBase + depth, 9);
+    const headingK = headingKByDepth[Math.min(depth, 9) - 1];
     list.forEach((node, i) => {
       // Markers render only in "custom" mode (each level's chosen symbol); a
       // multilevel node shows its precomputed number instead, and "off" shows

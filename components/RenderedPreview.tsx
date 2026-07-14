@@ -1,4 +1,4 @@
-import type { HeadingStyle } from "@/lib/clipboard";
+import { headingLevel, type HeadingStyle } from "@/lib/clipboard";
 
 /**
  * Read-only display of the ACTIVE section's rendered pivot HTML (from
@@ -75,23 +75,34 @@ export function RenderedPreview({
     `font-weight:${t.bold ? 700 : 400};font-style:${t.italic ? "italic" : "normal"};` +
     `text-decoration:${t.underline ? "underline" : "none"}}`;
   // A title mapped to a Word heading (headingStyleName set) is ALSO numbered by
-  // Word on paste, exactly like a body heading row — so it gets the same "# "
+  // Word on paste, exactly like a body heading row — so it gets the same hash
   // placeholder. The ::before only renders if a `.ws-title` actually exists, so a
   // titleless section shows nothing.
   const titleMapped = (headingStyle.headingStyleName ?? "") !== "";
   const titleRendered = html.includes('class="ws-title"');
+  // Markdown-style placeholder: one "#" PER heading level ("# " = Heading 1,
+  // "## " = Heading 2, …) so different heading ranks are distinguishable in the
+  // preview — a `data-heading="K"` row gets K hashes, and the mapped title gets
+  // its own level's count (from the Heading dropdown via headingLevel).
+  const hashes = (k: number) =>
+    `${"#".repeat(Math.min(Math.max(k, 1), 9))} `;
+  const titleN = headingLevel(headingStyle.headingStyleName ?? "");
   const css =
     titleRule +
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
     ).join("") +
     `.ws-preview [data-heading]{margin-left:0;font-weight:700}` +
-    `.ws-preview [data-heading]::before{content:"# ";opacity:0.4;font-weight:400}` +
+    Array.from(
+      { length: 9 },
+      (_, i) =>
+        `.ws-preview [data-heading="${i + 1}"]::before{content:"${hashes(i + 1)}";opacity:0.4;font-weight:400}`,
+    ).join("") +
     // A page-break row: a dashed rule + generous space above it stands in for the
     // Word page boundary the paste will insert before this top-level group.
     `.ws-preview [data-break]{margin-top:22px;border-top:1px dashed #b0b0b0;padding-top:16px}` +
     (titleMapped
-      ? `.ws-preview .ws-title::before{content:"# ";opacity:0.4;font-weight:400}`
+      ? `.ws-preview .ws-title::before{content:"${hashes(titleN)}";opacity:0.4;font-weight:400}`
       : "");
 
   const hasBreaks = html.includes(' data-break="1"');
@@ -115,19 +126,24 @@ export function RenderedPreview({
       />
       {hasHeadings && (
         <p className="mt-2 text-xs text-muted">
-          <span className="opacity-40"># </span>= Word supplies the heading number
-          (e.g. 5.0, 5.1) on a <strong>Use Destination Styles</strong> paste, and
-          the row joins the Navigation pane. Word applies the destination
+          <span className="opacity-40"># </span>= a Word heading — one{" "}
+          <span className="opacity-40">#</span>{" "}per level (
+          <span className="opacity-40">#</span>{" "}Heading 1,{" "}
+          <span className="opacity-40">##</span>{" "}Heading 2, …). Word supplies
+          the heading number (e.g. 5.0, 5.1) on a{" "}
+          <strong>Use Destination Styles</strong>{" "}paste, and the row joins
+          the Navigation pane. Word applies the destination
           heading&apos;s own formatting too, so it can come out{" "}
-          <strong>ALL-CAPS</strong> even though the preview shows normal case. For a
-          preview that matches Word exactly, use <strong>Multilevel numbers</strong>{" "}
-          instead of a Word heading (the app draws the numbers itself).
+          <strong>ALL-CAPS</strong>{" "}even though the preview shows normal case.
+          For a preview that matches Word exactly, use{" "}
+          <strong>Multilevel numbers</strong>{" "}instead of a Word heading (the
+          app draws the numbers itself).
         </p>
       )}
       {hasBreaks && (
         <p className="mt-2 text-xs text-muted">
-          The dashed rule marks a <strong>Word page break</strong> — each top-level
-          group starts on a new page when you paste.
+          The dashed rule marks a <strong>Word page break</strong>{" "}— each
+          top-level group starts on a new page when you paste.
         </p>
       )}
     </div>

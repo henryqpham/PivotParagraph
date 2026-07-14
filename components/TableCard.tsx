@@ -187,14 +187,37 @@ function TableCardInner({
   // Word export uses, so preview and paste stay in sync.
   const titleOffset = table.sectionTitle.trim() ? 1 : 0;
   const levelIdxForBucket = (b: number) => Math.min(8, b + titleOffset);
-  // The Word heading a checked level maps to: its depth offset by the TITLE's
-  // heading number — but only when a title is actually emitted (mirrors the
-  // renderer's `bodyHeadingBase = title ? titleLevel : 0`, clamped at 9). Shown as
-  // an H-number chip in the matrix so the mapping is visible, not guessed.
+  // The Word heading each level maps to, mirroring the renderer: AUTO = the
+  // CONTIGUOUS rank — the title's heading (only when a title is actually emitted,
+  // like the renderer's `bodyHeadingBase = title ? titleLevel : 0`) + how many
+  // heading-checked levels sit at or above this depth — so checking levels 1 and 4
+  // reads H2 → H3, never a skipped H2 → H5 outline. An explicit `headingRanks`
+  // entry (1–9; 0 = auto) overrides, for templates whose numbering keys off a
+  // specific rank. `skips` flags an override that jumps past a rank (Word's
+  // accessibility checker dings gapped outlines) so the chip can warn.
   const headingBase = table.sectionTitle.trim()
     ? headingLevel(headingStyleName)
     : 0;
-  const headingKForBucket = (b: number) => Math.min(headingBase + b + 1, 9);
+  const headingInfo = useMemo(() => {
+    const out: { k: number; auto: number; explicit: number; skips: boolean }[] =
+      [];
+    let prevK = headingBase;
+    for (let i = 0; i < pivotLevels.length; i++) {
+      const isHeading = table.headingLevels[i] === true;
+      const raw = table.headingRanks?.[i];
+      const explicit =
+        typeof raw === "number" && raw >= 1 && raw <= 9 ? Math.floor(raw) : 0;
+      // Auto = one rank under the previous heading (title, then each checked
+      // level in order, PINS INCLUDED) — so an auto level can never skip a rank
+      // and `skips` (the amber warning) can only come from an explicit pin.
+      const auto = Math.min(Math.max(prevK + 1, 1), 9);
+      const k = explicit || auto;
+      const skips = isHeading && k - prevK > 1;
+      if (isHeading) prevK = k;
+      out.push({ k, auto, explicit, skips });
+    }
+    return out;
+  }, [pivotLevels, table.headingLevels, table.headingRanks, headingBase]);
 
   // Field names come from the EFFECTIVE header row (bodyGrid honors a header offset
   // set in the Table view), so skipping banner rows renames the fields everywhere.
@@ -265,7 +288,7 @@ function TableCardInner({
         <h2 className={GROUP_HEADER}>Section Header</h2>
         <div className="flex flex-col gap-2.5 text-sm">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="w-16 shrink-0 text-xs text-text-secondary">
+            <span className="w-20 shrink-0 text-xs text-text-secondary">
               Title
             </span>
             <input
@@ -276,9 +299,13 @@ function TableCardInner({
               className={`${FIELD} w-56`}
             />
           </div>
+          {/* The "All tables" scope badge lives stacked IN the label cell (not at
+              the row's end) so a narrow center pane never wraps it onto its own
+              orphaned line. */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="w-16 shrink-0 text-xs text-text-secondary">
+            <span className="flex w-20 shrink-0 flex-col text-xs text-text-secondary">
               Heading
+              <span className={`${BADGE} mt-0.5 self-start`}>All tables</span>
             </span>
             <select
               value={headingStyleName}
@@ -292,11 +319,11 @@ function TableCardInner({
                 </option>
               ))}
             </select>
-            <span className={BADGE}>All tables</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="w-16 shrink-0 text-xs text-text-secondary">
+            <span className="flex w-20 shrink-0 flex-col text-xs text-text-secondary">
               Look
+              <span className={`${BADGE} mt-0.5 self-start`}>All tables</span>
             </span>
             <select
               value={title.font}
@@ -356,7 +383,6 @@ function TableCardInner({
               aria-label="Title color"
               className="h-7 w-8 cursor-pointer rounded border border-border-strong"
             />
-            <span className={BADGE}>All tables</span>
           </div>
         </div>
       </section>
@@ -449,15 +475,15 @@ function TableCardInner({
                     {pivotLevels.length > MAX_LEVELS ? (
                       <span>
                         This section has <strong>{pivotLevels.length} levels</strong>,
-                        but Word (and this preview) show only <strong>9</strong> —
-                        levels 10+ collapse onto level 9. Outdent (&#9668;) or remove
-                        fields until you&apos;re at 9 or fewer.
+                        but Word (and this preview) show only <strong>9</strong>
+                        {" "}— levels 10+ collapse onto level 9. Outdent (&#9668;)
+                        or remove fields until you&apos;re at 9 or fewer.
                       </span>
                     ) : (
                       <span>
-                        <strong>Maximum depth reached.</strong> Word supports 9 indent
-                        levels — new fields now stack at level 9 instead of nesting
-                        deeper.
+                        <strong>Maximum depth reached.</strong>{" "}Word supports
+                        9 indent levels — new fields now stack at level 9 instead
+                        of nesting deeper.
                       </span>
                     )}
                   </p>
@@ -719,7 +745,7 @@ function TableCardInner({
                             : "Marker"}
                         </span>
                       )}
-                      <span className="w-14 shrink-0 text-center">Heading</span>
+                      <span className="w-20 shrink-0 text-center">Heading</span>
                       <span className="w-20 shrink-0 text-center text-accent-text">
                         Look
                       </span>
@@ -730,7 +756,8 @@ function TableCardInner({
                         const idx = levelIdxForBucket(i);
                         const lv = appearance.levelStyles[idx] ?? DEFAULT_LEVEL;
                         const isHeading = table.headingLevels[i] === true;
-                        const headingK = headingKForBucket(i);
+                        const { k: headingK, auto, explicit, skips } =
+                          headingInfo[i];
                         return (
                           <div
                             key={i}
@@ -797,10 +824,12 @@ function TableCardInner({
                               )}
                               </div>
                             )}
-                            {/* Word heading: checkbox + the RESULTING heading
-                                number as a chip (H2 under a Heading-1 title, etc.)
-                                so the mapping is visible at a glance. */}
-                            <label className="flex w-14 shrink-0 items-center justify-center gap-1">
+                            {/* Word heading: checkbox + a rank chip-dropdown.
+                                Auto = the contiguous rank (H2 under a Heading-1
+                                title, etc., never skipping); picking H1–H9
+                                overrides it for template-specific numbering.
+                                Amber when a manual pick skips a rank. */}
+                            <div className="flex w-20 shrink-0 items-center justify-center gap-1">
                               <input
                                 type="checkbox"
                                 checked={isHeading}
@@ -812,20 +841,49 @@ function TableCardInner({
                                 aria-label={
                                   isHeading
                                     ? `${label} maps to Word Heading ${headingK} — uncheck to make it body text`
-                                    : `Map ${label} to Word Heading ${headingK} (Navigation pane, collapsible)`
+                                    : `Map ${label} to a Word heading (Navigation pane, collapsible)`
                                 }
-                                title={`Maps to Word "Heading ${headingK}" (Navigation pane, collapsible)`}
+                                title={`Map to a Word heading (Navigation pane, collapsible)`}
                                 className="accent-[var(--accent)]"
                               />
-                              {isHeading && (
-                                <span
-                                  className="rounded-sm bg-accent-subtle px-1 text-[10px] font-semibold tabular-nums text-accent-text"
-                                  title={`Pastes as Word "Heading ${headingK}"`}
+                              {/* Rendered always but visibility-hidden when
+                                  unchecked, so the column doesn't jump when a
+                                  box is ticked (hidden = out of tab order too). */}
+                              <select
+                                  value={explicit}
+                                  onChange={(e) => {
+                                    const next = [
+                                      ...(table.headingRanks ?? []),
+                                    ];
+                                    next[i] = Number(e.target.value); // 0 = auto
+                                    onChange({ headingRanks: next });
+                                  }}
+                                  aria-label={`Word heading rank for ${label} (Auto = Heading ${auto})`}
+                                  title={
+                                    skips
+                                      ? `Pastes as Word "Heading ${headingK}" — skips a rank (Word flags gapped outlines)`
+                                      : `Pastes as Word "Heading ${headingK}". Auto follows the checked levels above; pick H1–H9 to pin it.`
+                                  }
+                                  className={`h-6 rounded-sm border px-0.5 text-[10px] font-semibold tabular-nums outline-none transition-colors ${
+                                    isHeading ? "" : "invisible"
+                                  } ${
+                                    skips
+                                      ? "border-[color:color-mix(in_srgb,var(--warning)_55%,transparent)] bg-[color:color-mix(in_srgb,var(--warning)_12%,transparent)] text-[color:var(--warning)]"
+                                      : "border-border-strong bg-accent-subtle text-accent-text hover:border-accent"
+                                  }`}
                                 >
-                                  H{headingK}
-                                </span>
-                              )}
-                            </label>
+                                  <optgroup label="Auto (follows levels above)">
+                                    <option value={0}>H{auto}</option>
+                                  </optgroup>
+                                  <optgroup label="Pin to">
+                                    {Array.from({ length: 9 }, (_, n) => (
+                                      <option key={n + 1} value={n + 1}>
+                                        H{n + 1}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                </select>
+                            </div>
                             {/* Look (GLOBAL — all tables): color swatch inline +
                                 font/size/bold in a popover. Tinted so the
                                 this-section vs all-tables boundary stays obvious. */}

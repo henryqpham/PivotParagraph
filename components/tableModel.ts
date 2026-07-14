@@ -57,6 +57,17 @@ export type TableState = {
    * or two; sparse/short → not a heading.
    */
   headingLevels: boolean[];
+  /**
+   * OPTIONAL per-level override of WHICH Word heading a heading-checked level
+   * maps to (index = level − 1, like `headingLevels`; value 1–9). 0 / absent /
+   * null = AUTO: one rank under the PREVIOUS heading level (the title, then each
+   * heading-checked level in depth order, pinned values included) — so an auto
+   * level never skips a rank and autos re-derive around any pin. An explicit
+   * value serves templates whose numbering keys off a specific rank (e.g.
+   * several levels all mapping to `Heading 1`) and is the only way a rank gap
+   * can occur. Optional so old sessions/imports stay compatible.
+   */
+  headingRanks?: number[];
   /** Optional title; the one Word heading, above the nested rows. */
   sectionTitle: string;
   /**
@@ -336,6 +347,7 @@ export function tableToHtml(t: TableState, titleLevel = 0): string {
     t.headingLevels ?? [],
     titleLevel,
     t.pageBreakBefore ?? false,
+    t.headingRanks ?? [],
   );
 }
 

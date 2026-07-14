@@ -106,8 +106,10 @@ function historyChanged(a: SessionSnapshot, b: SessionSnapshot): boolean {
 }
 
 // ---- Fluent control recipes -----------------------------------------------
+// Disabled = flat neutral (not faded blue): a 50%-opacity primary still reads as
+// clickable; pointer-events-none also stops hover styles from firing on it.
 const BTN_PRIMARY =
-  "inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm font-semibold text-accent-fg bg-accent transition-colors hover:bg-accent-hover active:bg-accent-pressed disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm font-semibold text-accent-fg bg-accent transition-colors hover:bg-accent-hover active:bg-accent-pressed disabled:pointer-events-none disabled:bg-[color:color-mix(in_srgb,var(--muted)_14%,transparent)] disabled:text-muted";
 const BTN_SUBTLE =
   "inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm font-semibold text-text-secondary bg-transparent transition-colors hover:bg-surface-alt hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
 // Input/select recipe for the Document popover (matches TableCard's FIELD).
@@ -758,6 +760,7 @@ export function PasteInput() {
       breakAfter: src.breakAfter,
       numbering: src.numbering,
       headingLevels: src.headingLevels,
+      headingRanks: src.headingRanks ?? [],
       pageBreakBefore: src.pageBreakBefore ?? false,
     });
     setTables((ts) =>
@@ -964,8 +967,8 @@ export function PasteInput() {
               </>
             ) : (
               <>
-                → choose <strong>Keep Source Formatting</strong> to keep this
-                exact look.
+                → choose <strong>Keep Source Formatting</strong>{" "}to keep
+                this exact look.
               </>
             )}
           </span>
@@ -1008,8 +1011,8 @@ export function PasteInput() {
         className="flex items-center gap-3 rounded border border-[color:color-mix(in_srgb,var(--accent)_35%,transparent)] bg-accent-subtle px-4 py-2 text-sm text-foreground"
       >
         <span className="min-w-0 flex-1">
-          This table&apos;s headers match <strong>{name}</strong> — reuse its
-          arrangement (levels, markers, headings, sort)?
+          This table&apos;s headers match <strong>{name}</strong>{" "}— reuse
+          its arrangement (levels, markers, headings, sort)?
         </span>
         <button
           type="button"
@@ -1376,9 +1379,6 @@ export function PasteInput() {
                 <GridTable
                   grid={activeTable.grid}
                   headerRow={activeTable.headerRow ?? 0}
-                  onHeaderRowChange={(row) =>
-                    patchTable(activeTable.id, { headerRow: row })
-                  }
                 />
               ) : (
                 <p className="text-sm text-foreground/60">

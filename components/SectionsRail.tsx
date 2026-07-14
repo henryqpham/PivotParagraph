@@ -39,6 +39,19 @@ export function SectionsRail({
   const showFilter = tables.length > 8;
   const filterLower = filter.trim().toLowerCase();
   const labelOf = (t: TableState, i: number) => t.sectionTitle.trim() || `Table ${i + 1}`;
+  // Disambiguate rows sharing one label (a duplicated section, or two pastes
+  // given the same title): the 2nd/3rd/… occurrence gets a small rail-only
+  // count badge — never touching the exported title.
+  const occurrence: number[] = [];
+  {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < tables.length; i++) {
+      const l = labelOf(tables[i], i).toLowerCase();
+      const n = (seen.get(l) ?? 0) + 1;
+      seen.set(l, n);
+      occurrence.push(n);
+    }
+  }
   const matchesFilter = (t: TableState, i: number) =>
     !filterLower || labelOf(t, i).toLowerCase().includes(filterLower);
   const visibleCount = tables.reduce(
@@ -166,10 +179,18 @@ export function SectionsRail({
                 type="button"
                 onClick={() => onSelect(t.id)}
                 aria-current={isActive ? "true" : undefined}
-                className="min-w-0 flex-1 truncate text-left"
-                title={label}
+                className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                title={occurrence[i] > 1 ? `${label} (${occurrence[i]})` : label}
               >
-                {label}
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+                {occurrence[i] > 1 && (
+                  <span
+                    aria-label={`duplicate name ${occurrence[i]}`}
+                    className="shrink-0 rounded-sm bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] px-1 text-[10px] tabular-nums text-muted"
+                  >
+                    ×{occurrence[i]}
+                  </span>
+                )}
               </button>
               <button
                 type="button"

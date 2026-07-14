@@ -3,8 +3,6 @@ import type { Grid } from "@/lib/types";
 /** Cap the rows we render so a huge paste can't freeze the tab; the note below
  *  the table says how many were hidden (no silent truncation). */
 const MAX_ROWS = 500;
-/** Only offer to skip up to this many leading rows (a real banner is a few rows). */
-const MAX_HEADER_OFFSET = 15;
 
 /**
  * A faithful, spreadsheet-style view of the RAW parsed grid — exactly what was
@@ -13,10 +11,9 @@ const MAX_HEADER_OFFSET = 15;
  * row-number gutter. Wide tables (the whole reason this app exists) scroll
  * horizontally inside their own container; the header + gutter stay pinned.
  *
- * The optional **Header row** control lets the user skip banner/title rows sitting
- * ABOVE the real header (`headerRow` is the 0-based index of the header). Changing
- * it re-slices the grid everywhere (via `bodyGrid`), fixing the common case where a
- * "Q3 Report" banner row would otherwise become the field names.
+ * `headerRow` (0-based, default 0) still shifts which row renders as the header —
+ * it honors a legacy session's stored offset via `bodyGrid` — but the in-view
+ * "Header row" picker was removed by request; there is no UI to change it.
  *
  * All cell text is rendered as JSX children (React escapes it), so there is no
  * injection surface even though the values are user-derived.
@@ -24,11 +21,9 @@ const MAX_HEADER_OFFSET = 15;
 export function GridTable({
   grid,
   headerRow = 0,
-  onHeaderRowChange,
 }: {
   grid: Grid;
   headerRow?: number;
-  onHeaderRowChange?: (row: number) => void;
 }) {
   if (!grid || grid.length === 0) {
     return (
@@ -46,10 +41,6 @@ export function GridTable({
   const shown = dataRows.slice(0, MAX_ROWS);
   const hidden = dataRows.length - shown.length;
   const text = (c: unknown) => (c == null ? "" : String(c));
-  // Offer the control only when there's room to skip a row and still keep data, and
-  // only when we can actually report the change up.
-  const showHeaderPicker = !!onHeaderRowChange && grid.length >= 3;
-  const maxOffset = Math.min(grid.length - 2, MAX_HEADER_OFFSET);
 
   // Header cells: pinned to the top on vertical scroll. No `z` in the base so the
   // corner cell can override it without a Tailwind ordering conflict.
@@ -67,29 +58,8 @@ export function GridTable({
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-foreground/60">
         <span>
           {grid.length} row{grid.length === 1 ? "" : "s"} &times; {cols} column
-          {cols === 1 ? "" : "s"}{" "}
-          <span className="text-muted">
-            &middot; row {hr + 1} is the header
-          </span>
+          {cols === 1 ? "" : "s"}
         </span>
-        {showHeaderPicker && (
-          <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-            Header row
-            <select
-              value={hr}
-              onChange={(e) => onHeaderRowChange?.(Number(e.target.value))}
-              aria-label="Which pasted row is the header (rows above it are ignored)"
-              title="Skip banner/title rows above the real header"
-              className="h-7 rounded border border-border-strong bg-surface px-1.5 text-xs text-foreground outline-none transition-colors focus:border-accent"
-            >
-              {Array.from({ length: maxOffset + 1 }, (_, i) => (
-                <option key={i} value={i}>
-                  Row {i + 1}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
       </div>
       {hr > 0 && (
         <p className="text-xs text-muted">

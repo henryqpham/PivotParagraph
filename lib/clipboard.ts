@@ -139,12 +139,20 @@ const FALLBACK_TITLE: TitleStyle = {
  *
  * The TITLE maps this way too when `headingStyleName` is a built-in "Heading 1–6"
  * (all the dropdown offers): it becomes `<hN>` so the paste puts it in the
- * document outline and Word supplies its heading NUMBER, while the user's full
- * title Look (font/size/color + bold/italic/underline) is emitted as inline
- * direct formatting so the appearance pastes exactly as previewed. Any OTHER
- * non-empty style name keeps the legacy `<p class="MsoTitle">` +
- * `mso-style-name:"<name>"` route (a custom name has no tag equivalent; it maps
- * on a Use-Destination-Styles paste); blank = the same direct look on a plain
+ * document outline and Word supplies its heading NUMBER. The title's
+ * font/size/color (+ `<i>`/`<u>` runs) ride INLINE and its WEIGHT is declared in
+ * the title's style RULE — COM-verified result: a KEEP-SOURCE-FORMATTING paste
+ * shows exactly the preview look (inline + rule), while a USE-DESTINATION-STYLES
+ * paste strips BOTH and gives the destination heading's complete look (font,
+ * size, weight — Word's style recovery discards direct formatting on
+ * style-mapped paragraphs). No inline weight is emitted at all: bold is an OOXML
+ * toggle, and the old inverted-weight trick rendered backwards under KSF (the
+ * bug this replaced). Same convention as the body heading rows: UDS = the
+ * document's look, KSF = the preview's.
+ * Any OTHER non-empty style name keeps the legacy `<p class="MsoTitle">` +
+ * `mso-style-name:"<name>"` route with the same rule-declared weight (a custom
+ * name has no tag equivalent; it maps on a Use-Destination-Styles paste);
+ * blank = the full direct look, including a literal `<b>` run, on a plain
  * paragraph.
  *
  * A body level the user mapped to a Word heading arrives as `data-heading="K"` and
@@ -219,20 +227,17 @@ export function buildWordHtml(
   // overridden from HTML: the heading's auto-NUMBER and an all-caps heading's
   // UPPERCASE effect.)
   //
-  // BOLD is special: Word treats character bold as a TOGGLE relative to the
-  // paragraph STYLE's own weight, and the built-in Heading 1-9 styles are all bold.
-  // So a `font-weight:bold` run on a mapped (bold) heading CANCELS to not-bold,
-  // while `font-weight:normal` is ignored and the heading's bold shows through. To
-  // make the B button read ABSOLUTELY (checked => bold, unchecked => not bold) we
-  // therefore INVERT the weight we emit: inherit (normal) to KEEP the heading's
-  // bold, and emit an explicit bold run only to CANCEL it. This assumes the mapped
-  // heading is bold (true for Word's built-in Heading 1-4); a custom NON-bold
-  // heading style would flip it -- use Heading = None there for absolute control.
+  // WEIGHT is deliberately NOT in this inline run. Bold is an OOXML toggle
+  // property, and the old inverted-weight trick rendered LITERALLY (backwards)
+  // under Keep Source Formatting, where no style mapping happens. The title's
+  // true weight lives in its STYLE RULE instead (below). COM-verified outcome:
+  // KSF = exact preview look (this inline run + the rule); UDS = the destination
+  // heading's complete look (Word's style recovery strips direct formatting on
+  // mapped paragraphs — the inline font/size/color only survive non-mapping
+  // pastes, which is exactly where they're needed).
   const wrapTitleOnHeading = (content: string) => {
-    const weight = ts.bold ? "normal" : "bold"; // inverted: cancels Word's toggle
     const runStyle =
-      `font-family:'${ts.font}';font-size:${ts.size}pt;` +
-      `color:${ts.color};font-weight:${weight}`;
+      `font-family:'${ts.font}';font-size:${ts.size}pt;color:${ts.color}`;
     let h = `<span style="${runStyle}">${content}</span>`;
     if (ts.underline) h = `<u>${h}</u>`;
     if (ts.italic) h = `<i>${h}</i>`;
@@ -251,7 +256,7 @@ export function buildWordHtml(
   // ARE the visible look on a Keep-Source-Formatting paste (matching the preview's
   // bold heading rows). No paragraph props: Word supplies the destination
   // heading's spacing when mapped, its h-defaults under KSF.
-  type HeadingLook = { color: string; font: string; size: number };
+  type HeadingLook = { color: string; font: string; size: number; bold: boolean };
   // Heading levels emitted as real <hN> tags (title + body) and body levels 7–9
   // (no HTML tag exists; class route). Each K records the look its rule declares.
   const tagHeadings = new Map<number, HeadingLook>();
@@ -264,13 +269,15 @@ export function buildWordHtml(
       if (!headingName)
         return `<p style="${titleStyleAttr}">${wrapTitle(content)}</p>`;
       if (titleTagLevel) {
-        // The rule declares the title's own look; the inline span in
-        // wrapTitleOnHeading overrides the text run either way, so this only
-        // shapes the paragraph fallback under KSF.
+        // The rule declares the title's own look INCLUDING its true weight (the
+        // inline span carries font/size/color but deliberately no weight — see
+        // wrapTitleOnHeading): KSF shows this rule look, UDS swaps it for the
+        // destination heading's definition.
         tagHeadings.set(titleTagLevel, {
           color: ts.color,
           font: ts.font,
           size: ts.size,
+          bold: ts.bold,
         });
         return `<h${titleTagLevel}>${wrapTitleOnHeading(content)}</h${titleTagLevel}>`;
       }
@@ -302,7 +309,8 @@ export function buildWordHtml(
         if (h) {
           const k = Number(h);
           const s = lvl(i);
-          const look = { color: s.color, font: s.font, size: s.size };
+          // Heading rows always declare bold (the preview shows them bold).
+          const look = { color: s.color, font: s.font, size: s.size, bold: true };
           // The page break is added as inline direct formatting (survives a
           // Use-Destination-Styles paste).
           const style = pageBreak ? ` style="${pageBreak}"` : "";
@@ -329,9 +337,14 @@ export function buildWordHtml(
   // no stray rule. Every plain body level is inline and needs no rule.
   const headingRule = (sel: string, k: number, s: HeadingLook) =>
     `${sel}{mso-style-name:"Heading ${k}";mso-outline-level:${k};` +
-    `color:${s.color};font-family:'${s.font}';font-size:${s.size}pt;font-weight:bold}`;
+    `color:${s.color};font-family:'${s.font}';font-size:${s.size}pt;` +
+    `font-weight:${s.bold ? "bold" : "normal"}}`;
+  // The custom-name route's rule also declares the title's true weight, for the
+  // same reason as the <hN> rules: KSF renders it (preview-faithful), UDS swaps
+  // it for the destination style's definition.
   const titleRule = titleUsesClassRoute
-    ? `p.MsoTitle{mso-style-name:"${headingName}";mso-outline-level:${titleLevel}}`
+    ? `p.MsoTitle{mso-style-name:"${headingName}";mso-outline-level:${titleLevel};` +
+      `font-weight:${ts.bold ? "bold" : "normal"}}`
     : "";
   const headingRules =
     Array.from(tagHeadings)

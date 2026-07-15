@@ -20,8 +20,11 @@ import { headingLevel, type HeadingStyle } from "@/lib/clipboard";
  */
 // A white "paper" surface (a Word-page proxy) that stays white in BOTH themes,
 // floating on the canvas with a Fluent depth shadow.
+// Generous left padding (pl-14) so the hanging H-tokens sit in a comfortable
+// gutter instead of pressing against the paper's edge — closer to a real Word
+// page margin.
 const previewClasses =
-  "ws-preview rounded-[2px] bg-white p-6 text-sm text-[#242424] shadow-[var(--shadow-4)] " +
+  "ws-preview rounded-[2px] bg-white p-6 pl-14 text-sm text-[#242424] shadow-[var(--shadow-4)] " +
   "[&_.ws-title]:mt-1 [&_[data-level]]:mt-1 [&_p]:my-0.5 [&_p]:leading-tight";
 
 export function RenderedPreview({
@@ -79,12 +82,15 @@ export function RenderedPreview({
   // placeholder. The ::before only renders if a `.ws-title` actually exists, so a
   // titleless section shows nothing.
   const titleMapped = (headingStyle.headingStyleName ?? "") !== "";
-  // Markdown-style placeholder: one "#" PER heading level ("# " = Heading 1,
-  // "## " = Heading 2, …) so different heading ranks are distinguishable in the
-  // preview — a `data-heading="K"` row gets K hashes, and the mapped title gets
-  // its own level's count (from the Heading dropdown via headingLevel).
-  const hashes = (k: number) =>
-    `${"#".repeat(Math.min(Math.max(k, 1), 9))} `;
+  // Heading placeholder: a muted "H2"/"H3"/… token HANGING in the left margin
+  // (absolutely positioned) so the heading TEXT stays flush-left — matching Word
+  // exactly, where heading styles carry no indent. A constant-width token instead
+  // of repeated Markdown hashes: "####" outgrew the paper's left padding at deep
+  // levels, and the token also matches the matrix's H-chips (one visual
+  // language). The mapped title shows its own outline level the same way.
+  const headingTag = (k: number) => `H${Math.min(Math.max(k, 1), 9)}`;
+  const hangingTag = (content: string) =>
+    `content:"${content}";position:absolute;right:100%;padding-right:0.35em;opacity:0.4;font-weight:400`;
   const titleN = headingLevel(headingStyle.headingStyleName ?? "");
   // Body line spacing, mirroring buildWordHtml's clamp. Unlayered rule, so it
   // wins over the Tailwind-layered `leading-tight` fallback on the paper div.
@@ -99,17 +105,18 @@ export function RenderedPreview({
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
     ).join("") +
-    `.ws-preview [data-heading]{margin-left:0;font-weight:700}` +
+    `.ws-preview [data-heading]{margin-left:0;font-weight:700;position:relative}` +
     Array.from(
       { length: 9 },
       (_, i) =>
-        `.ws-preview [data-heading="${i + 1}"]::before{content:"${hashes(i + 1)}";opacity:0.4;font-weight:400}`,
+        `.ws-preview [data-heading="${i + 1}"]::before{${hangingTag(headingTag(i + 1))}}`,
     ).join("") +
     // A page-break row: a dashed rule + generous space above it stands in for the
     // Word page boundary the paste will insert before this top-level group.
     `.ws-preview [data-break]{margin-top:22px;border-top:1px dashed #b0b0b0;padding-top:16px}` +
     (titleMapped
-      ? `.ws-preview .ws-title::before{content:"${hashes(titleN)}";opacity:0.4;font-weight:400}`
+      ? `.ws-preview .ws-title{position:relative}` +
+        `.ws-preview .ws-title::before{${hangingTag(headingTag(titleN))}}`
       : "");
 
   // No explanatory footnotes under the paper — the hash placeholders and the

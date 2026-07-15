@@ -57,19 +57,23 @@ export type HeadingStyle = {
   indentStep: number; // inches of left-indent per nesting level
   headingStyleName: string; // Word style for the title ("" = direct look)
   titleStyle?: TitleStyle; // the title's own direct look (when not mapped)
+  /** Body line spacing as a multiplier (1 / 1.15 / 1.5; default 1.15). Emitted
+   *  as `line-height:N%` — Word reads that as "Multiple" paragraph spacing. */
+  lineSpacing?: number;
 };
 
 /**
  * Make a string safe inside the `mso-style-name:"..."` declaration in the
  * clipboard `<style>`. A real Word style name needs only letters, digits, spaces,
- * dots, and hyphens, so we ALLOW-LIST that set and drop everything else. That
- * removes every character with CSS meaning -- the closing quote, `{` `}` `;`,
- * backslash, angle brackets, comment sequences, and newlines/control chars -- so a
- * crafted name can't terminate the string and inject a rule into the document
- * copied to the clipboard. Names like "Heading 1" still pass unchanged.
+ * dots, underscores, and hyphens (template styles like "TBL_TITLE" use `_`), so
+ * we ALLOW-LIST that set and drop everything else. That removes every character
+ * with CSS meaning -- the closing quote, `{` `}` `;`, backslash, angle brackets,
+ * comment sequences, and newlines/control chars -- so a crafted name can't
+ * terminate the string and inject a rule into the document copied to the
+ * clipboard. Names like "Heading 1" still pass unchanged.
  */
 function sanitizeStyleName(s: string): string {
-  return s.replace(/[^A-Za-z0-9 .-]/g, "").trim();
+  return s.replace(/[^A-Za-z0-9 ._-]/g, "").trim();
 }
 
 /**
@@ -166,6 +170,12 @@ export function buildWordHtml(
   const step = heading.indentStep ?? 0.2;
   const headingName = sanitizeStyleName(heading.headingStyleName ?? "");
   const titleLevel = headingLevel(headingName); // outline level for the title
+  // Body line spacing (percent). Clamped to a sane band; 115 = the old fixed value.
+  const spacingRaw = heading.lineSpacing ?? 1.15;
+  const spacingPct = Math.round(
+    Math.min(3, Math.max(1, Number.isFinite(spacingRaw) ? spacingRaw : 1.15)) *
+      100,
+  );
 
   // Inline direct formatting for an app-styled paragraph: level index `i`, indented
   // for render-level `n` (1-based). Inline (not a CSS class) so it survives a
@@ -175,7 +185,7 @@ export function buildWordHtml(
     const s = lvl(i);
     const indent = ((n - 1) * step).toFixed(2);
     return (
-      `margin-top:0in;margin-bottom:0in;margin-left:${indent}in;line-height:115%;` +
+      `margin-top:0in;margin-bottom:0in;margin-left:${indent}in;line-height:${spacingPct}%;` +
       `color:${s.color};font-family:'${s.font}';font-size:${s.size}pt`
     );
   };
@@ -189,7 +199,7 @@ export function buildWordHtml(
   // then italic, then bold (all <b>/<i>/<u> runs survive a Use-Destination paste).
   const ts = heading.titleStyle ?? FALLBACK_TITLE;
   const titleStyleAttr =
-    `margin-top:0in;margin-bottom:0in;line-height:115%;` +
+    `margin-top:0in;margin-bottom:0in;line-height:${spacingPct}%;` +
     `color:${ts.color};font-family:'${ts.font}';font-size:${ts.size}pt`;
   const wrapTitle = (content: string) => {
     let h = content;

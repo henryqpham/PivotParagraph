@@ -47,7 +47,9 @@ const DEFAULT_TITLE: TitleInput = {
   underline: false,
 };
 
-/** The full workspace state we persist to localStorage (all JSON-serializable). */
+/** The full workspace state we persist to localStorage (all JSON-serializable).
+ *  `labelSep` and `lineSpacing` are OPTIONAL so pre-existing sessions/exports
+ *  still load (defaults applied on read). */
 type SessionSnapshot = {
   tables: TableState[];
   levelStyles: LevelInput[];
@@ -56,6 +58,8 @@ type SessionSnapshot = {
   headingStyleName: string;
   titleInput: TitleInput;
   activeId: string | null;
+  labelSep?: string;
+  lineSpacing?: string;
 };
 
 /** The post-copy confirmation shown near "Copy section" (and announced to a11y). */
@@ -101,9 +105,28 @@ function historyChanged(a: SessionSnapshot, b: SessionSnapshot): boolean {
     a.bodyFont !== b.bodyFont ||
     a.indentInput !== b.indentInput ||
     a.headingStyleName !== b.headingStyleName ||
-    a.titleInput !== b.titleInput
+    a.titleInput !== b.titleInput ||
+    a.labelSep !== b.labelSep ||
+    a.lineSpacing !== b.lineSpacing
   );
 }
+
+/** Allow-listed `Field name<sep>value` separators (the ⚙ Document control). */
+const LABEL_SEPS = [
+  { value: ": ", label: "Name: Value" },
+  { value: " — ", label: "Name — Value" },
+  { value: " - ", label: "Name - Value" },
+  { value: " ", label: "Name Value (space)" },
+] as const;
+const DEFAULT_LABEL_SEP = ": ";
+
+/** Allow-listed body line-spacing multipliers (the ⚙ Document control). */
+const LINE_SPACINGS = [
+  { value: "1", label: "Single" },
+  { value: "1.15", label: "1.15 (default)" },
+  { value: "1.5", label: "1.5" },
+] as const;
+const DEFAULT_LINE_SPACING = "1.15";
 
 // ---- Fluent control recipes -----------------------------------------------
 // Disabled = flat neutral (not faded blue): a 50%-opacity primary still reads as
@@ -177,10 +200,14 @@ export function PasteInput() {
   // Left-indent per nesting level (inches), clamped [0, 2].
   const [indentInput, setIndentInput] = useState<string>("0.2");
   // Global Word heading style the TITLE maps to ("" = None). Driven by the
-  // Section Header dropdown in TableCard.
+  // Section Title dropdown in TableCard.
   const [headingStyleName, setHeadingStyleName] = useState<string>("Heading 1");
-  // Shared TITLE look (its own controls in the Section Header group).
+  // Shared TITLE look (its own controls in the Section Title group).
   const [titleInput, setTitleInput] = useState<TitleInput>(DEFAULT_TITLE);
+  // Document-wide `Field name<sep>value` separator (allow-listed; default ": ").
+  const [labelSep, setLabelSep] = useState<string>(DEFAULT_LABEL_SEP);
+  // Document-wide body line spacing as a string multiplier ("1"/"1.15"/"1.5").
+  const [lineSpacing, setLineSpacing] = useState<string>(DEFAULT_LINE_SPACING);
 
   // Apply a full workspace snapshot into state — shared by the mount-time
   // localStorage rehydration below AND by Import (a user-selected backup file), so
@@ -194,6 +221,8 @@ export function PasteInput() {
     setIndentInput(s.indentInput ?? "0.2");
     setHeadingStyleName(s.headingStyleName ?? "Heading 1");
     setTitleInput(s.titleInput ?? DEFAULT_TITLE);
+    setLabelSep(s.labelSep ?? DEFAULT_LABEL_SEP);
+    setLineSpacing(s.lineSpacing ?? DEFAULT_LINE_SPACING);
     const restoredActive =
       s.tables.find((t) => t.id === s.activeId)?.id ?? s.tables[0]?.id ?? null;
     setActiveId(restoredActive);
@@ -241,6 +270,8 @@ export function PasteInput() {
       headingStyleName,
       titleInput,
       activeId,
+      labelSep,
+      lineSpacing,
     }),
     [
       tables,
@@ -250,6 +281,8 @@ export function PasteInput() {
       headingStyleName,
       titleInput,
       activeId,
+      labelSep,
+      lineSpacing,
     ],
   );
   useEffect(() => {
@@ -398,6 +431,7 @@ export function PasteInput() {
     const indentStep = Number.isFinite(parsedIndent)
       ? Math.min(2, Math.max(0, parsedIndent))
       : 0.2;
+    const parsedSpacing = parseFloat(lineSpacing);
     return {
       levels,
       indentStep,
@@ -410,8 +444,18 @@ export function PasteInput() {
         italic: titleInput.italic,
         underline: titleInput.underline,
       },
+      lineSpacing: Number.isFinite(parsedSpacing)
+        ? Math.min(3, Math.max(1, parsedSpacing))
+        : 1.15,
     };
-  }, [levelStyles, indentInput, headingStyleName, titleInput, bodyFont]);
+  }, [
+    levelStyles,
+    indentInput,
+    headingStyleName,
+    titleInput,
+    bodyFont,
+    lineSpacing,
+  ]);
 
   function setLevel(i: number, patch: Partial<LevelInput>) {
     noteEdit();
@@ -434,6 +478,15 @@ export function PasteInput() {
   function changeBodyFont(v: string) {
     noteEdit();
     setBodyFont(v);
+  }
+  function changeLabelSep(v: string) {
+    noteEdit();
+    // Allow-list: silently ignore anything outside the offered separators.
+    if (LABEL_SEPS.some((s) => s.value === v)) setLabelSep(v);
+  }
+  function changeLineSpacing(v: string) {
+    noteEdit();
+    if (LINE_SPACINGS.some((s) => s.value === v)) setLineSpacing(v);
   }
   function changeIndentInput(v: string) {
     noteEdit();
@@ -818,7 +871,7 @@ export function PasteInput() {
   async function copySection() {
     if (!activeTable) return;
     const titleLvl = headingLevel(headingStyleName);
-    const html = tableToHtml(activeTable, titleLvl);
+    const html = tableToHtml(activeTable, titleLvl, labelSep);
     if (html === "") {
       setCopyNote({ status: "empty" });
       return;
@@ -865,8 +918,8 @@ export function PasteInput() {
   // pane preview and (recomputed identically in copySection) the copy, so the two
   // can't drift.
   const activeHtml = useMemo(
-    () => (activeTable ? tableToHtml(activeTable, titleLevel) : ""),
-    [activeTable, titleLevel],
+    () => (activeTable ? tableToHtml(activeTable, titleLevel, labelSep) : ""),
+    [activeTable, titleLevel, labelSep],
   );
   // Rows/levels/rough-page-count readout for the active section — a quick at-a-
   // glance answer to "does this still fit a page," shown next to the preview tabs.
@@ -1007,7 +1060,7 @@ export function PasteInput() {
     const srcIdx = tables.findIndex((t) => t.id === arrangeHint.sourceId);
     const src = srcIdx >= 0 ? tables[srcIdx] : undefined;
     if (!src || !tables.some((t) => t.id === arrangeHint.targetId)) return null;
-    const name = src.sectionTitle.trim() || `Table ${srcIdx + 1}`;
+    const name = src.sectionTitle.trim() || `Section ${srcIdx + 1}`;
     return (
       <div
         role="status"
@@ -1138,7 +1191,38 @@ export function PasteInput() {
                     </select>
                   </label>
                   <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
-                    Indent/level (in)
+                    Line spacing
+                    <select
+                      value={lineSpacing}
+                      onChange={(e) => changeLineSpacing(e.target.value)}
+                      aria-label="Body line spacing"
+                      className={FIELD}
+                    >
+                      {LINE_SPACINGS.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
+                    Label separator
+                    <select
+                      value={labelSep}
+                      onChange={(e) => changeLabelSep(e.target.value)}
+                      aria-label="Separator between a field label and its value"
+                      title='How "Field name" joins its value on every row'
+                      className={FIELD}
+                    >
+                      {LABEL_SEPS.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
+                    Indent per level (inches)
                     <input
                       type="text"
                       inputMode="decimal"

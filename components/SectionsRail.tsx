@@ -38,7 +38,10 @@ export function SectionsRail({
   const [filter, setFilter] = useState("");
   const showFilter = tables.length > 8;
   const filterLower = filter.trim().toLowerCase();
-  const labelOf = (t: TableState, i: number) => t.sectionTitle.trim() || `Table ${i + 1}`;
+  // Untitled sections are "Section N", matching everything else in the app
+  // ("Sections" rail, "N sections" count, "Copy section") — "Table N" was the
+  // one place that called them something else.
+  const labelOf = (t: TableState, i: number) => t.sectionTitle.trim() || `Section ${i + 1}`;
   // Disambiguate rows sharing one label (a duplicated section, or two pastes
   // given the same title): the 2nd/3rd/… occurrence gets a small rail-only
   // count badge — never touching the exported title.

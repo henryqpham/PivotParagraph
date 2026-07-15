@@ -60,7 +60,7 @@ export function RenderedPreview({
   // shows them verbatim. A heading row (`data-heading`) instead sits flush-left and
   // bold (it loses the body indent in Word) with a muted "#" where Word inserts the
   // live heading number on paste.
-  // The title has its OWN shared look (set in the Section Header group), not the
+  // The title has its OWN shared look (set in the Section Title group), not the
   // level chart -- so read it from headingStyle.titleStyle, with italic/underline.
   const t = headingStyle.titleStyle ?? {
     color: "#000000",
@@ -79,7 +79,6 @@ export function RenderedPreview({
   // placeholder. The ::before only renders if a `.ws-title` actually exists, so a
   // titleless section shows nothing.
   const titleMapped = (headingStyle.headingStyleName ?? "") !== "";
-  const titleRendered = html.includes('class="ws-title"');
   // Markdown-style placeholder: one "#" PER heading level ("# " = Heading 1,
   // "## " = Heading 2, …) so different heading ranks are distinguishable in the
   // preview — a `data-heading="K"` row gets K hashes, and the mapped title gets
@@ -87,7 +86,15 @@ export function RenderedPreview({
   const hashes = (k: number) =>
     `${"#".repeat(Math.min(Math.max(k, 1), 9))} `;
   const titleN = headingLevel(headingStyle.headingStyleName ?? "");
+  // Body line spacing, mirroring buildWordHtml's clamp. Unlayered rule, so it
+  // wins over the Tailwind-layered `leading-tight` fallback on the paper div.
+  const rawSpacing = headingStyle.lineSpacing ?? 1.15;
+  const spacing = Math.min(
+    3,
+    Math.max(1, Number.isFinite(rawSpacing) ? rawSpacing : 1.15),
+  );
   const css =
+    `.ws-preview p{line-height:${spacing * 100}%}` +
     titleRule +
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
@@ -105,15 +112,9 @@ export function RenderedPreview({
       ? `.ws-preview .ws-title::before{content:"${hashes(titleN)}";opacity:0.4;font-weight:400}`
       : "");
 
-  const hasBreaks = html.includes(' data-break="1"');
-
-  // Show the heading footnote whenever a "# " placeholder is visible: a body row
-  // mapped to a Word heading, OR a title that is itself mapped to a heading. Match
-  // the real emitted attribute (` data-heading="…`), not a bare substring, so a
-  // cell/title whose text merely contains "data-heading" can't trigger it.
-  const hasHeadings =
-    (titleMapped && titleRendered) || html.includes(' data-heading="');
-
+  // No explanatory footnotes under the paper — the hash placeholders and the
+  // dashed page-break rule carry their meaning; prose captions were judged
+  // noise (removed by request, twice — don't reintroduce).
   return (
     <div>
       {/* Scoped stylesheet; the `.ws-preview` selectors apply to the paper below. */}
@@ -124,28 +125,6 @@ export function RenderedPreview({
         style={{ fontFamily: bodyFont }}
         dangerouslySetInnerHTML={{ __html: html }}
       />
-      {hasHeadings && (
-        <p className="mt-2 text-xs text-muted">
-          <span className="opacity-40"># </span>= a Word heading — one{" "}
-          <span className="opacity-40">#</span>{" "}per level (
-          <span className="opacity-40">#</span>{" "}Heading 1,{" "}
-          <span className="opacity-40">##</span>{" "}Heading 2, …). Word supplies
-          the heading number (e.g. 5.0, 5.1) on a{" "}
-          <strong>Use Destination Styles</strong>{" "}paste, and the row joins
-          the Navigation pane. Word applies the destination
-          heading&apos;s own formatting too, so it can come out{" "}
-          <strong>ALL-CAPS</strong>{" "}even though the preview shows normal case.
-          For a preview that matches Word exactly, use{" "}
-          <strong>Multilevel numbers</strong>{" "}instead of a Word heading (the
-          app draws the numbers itself).
-        </p>
-      )}
-      {hasBreaks && (
-        <p className="mt-2 text-xs text-muted">
-          The dashed rule marks a <strong>Word page break</strong>{" "}— each
-          top-level group starts on a new page when you paste.
-        </p>
-      )}
     </div>
   );
 }

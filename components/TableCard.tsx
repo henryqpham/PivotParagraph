@@ -50,6 +50,8 @@ const HEADING_OPTIONS = [
   { value: "Heading 3", label: "Heading 3" },
   { value: "Heading 4", label: "Heading 4" },
 ];
+/** Dropdown sentinel for "map the title to a custom destination style name". */
+const CUSTOM_HEADING = "__custom__";
 
 /** Marker styles offered per indent level, with a sample label. */
 const MARKER_OPTIONS: { kind: MarkerKind; label: string }[] = [
@@ -182,6 +184,15 @@ function TableCardInner({
   // A plain-text filter over the Add-fields pool, only shown once it's long enough
   // to need one (a wide spreadsheet can have dozens of columns).
   const [fieldFilter, setFieldFilter] = useState("");
+  // Whether the title's Word-heading control is in "Custom style…" mode (a text
+  // input for any destination style name). Initialized from the CURRENT name —
+  // a name outside the dropdown's options can only be a custom one. The card
+  // remounts per section (keyed by table id), so this re-derives on switch.
+  const [customHeading, setCustomHeading] = useState(
+    () =>
+      headingStyleName !== "" &&
+      !HEADING_OPTIONS.some((o) => o.value === headingStyleName),
+  );
 
   const { pivotLevels } = table;
   // A body bucket's GLOBAL level-style slot = its indent depth, +1 when a Section
@@ -288,7 +299,11 @@ function TableCardInner({
     <div className="flex flex-col gap-4">
       {/* ---- SECTION HEADER group (the level-0 title, its own home) ---------- */}
       <section className={CARD}>
-        <h2 className={GROUP_HEADER}>Section Header</h2>
+        {/* "Section Title", not "Section Header" — "header" is overloaded here
+            (table header row, Word page headers, the Heading dropdown beside it);
+            this group is exactly the section's TITLE: its text, Word-heading
+            mapping, and look. */}
+        <h2 className={GROUP_HEADER}>Section Title</h2>
         <div className="flex flex-col gap-2.5 text-sm">
           <div className="flex flex-wrap items-center gap-2">
             <span className="w-20 shrink-0 text-xs text-text-secondary">
@@ -307,12 +322,28 @@ function TableCardInner({
               orphaned line. */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex w-20 shrink-0 flex-col text-xs text-text-secondary">
-              Heading
+              Word heading
               <span className={`${BADGE} mt-0.5 self-start`}>All tables</span>
             </span>
+            {/* Hybrid control: the dropdown is the safe, verified fast path
+                (built-in Heading 1–4 map as real <hN> in every paste mode);
+                "Custom style…" reveals a text input for mapping the title to ANY
+                named style in the destination template (e.g. TBL_TITLE) — the
+                legacy mso-style-name route, which maps on a Use-Destination-
+                Styles paste and requires the name to exist in the template. */}
             <select
-              value={headingStyleName}
-              onChange={(e) => onHeadingStyleChange(e.target.value)}
+              value={customHeading ? CUSTOM_HEADING : headingStyleName}
+              onChange={(e) => {
+                if (e.target.value === CUSTOM_HEADING) {
+                  // Start blank (= unmapped) until a real name is typed, so a
+                  // half-configured custom style never silently emits.
+                  setCustomHeading(true);
+                  onHeadingStyleChange("");
+                } else {
+                  setCustomHeading(false);
+                  onHeadingStyleChange(e.target.value);
+                }
+              }}
               aria-label="Word heading style for the title"
               className={FIELD}
             >
@@ -321,7 +352,25 @@ function TableCardInner({
                   {o.label}
                 </option>
               ))}
+              <option value={CUSTOM_HEADING}>Custom style…</option>
             </select>
+            {customHeading && (
+              <>
+                <input
+                  type="text"
+                  value={headingStyleName}
+                  onChange={(e) => onHeadingStyleChange(e.target.value)}
+                  placeholder="Style name, e.g. TBL_TITLE"
+                  maxLength={60}
+                  aria-label="Custom destination style name for the title"
+                  className={`${FIELD} w-52`}
+                />
+                <span className="basis-full pl-[88px] text-[11px] leading-snug text-muted">
+                  Must match a style that exists in the destination document —
+                  maps on a <strong>Use Destination Styles</strong>{" "}paste.
+                </span>
+              </>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex w-20 shrink-0 flex-col text-xs text-text-secondary">

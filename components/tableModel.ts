@@ -338,7 +338,11 @@ export function makeExampleTable(id: string): TableState {
  * none) sets the body heading offset, so callers pass it from the shared style via
  * `headingLevel(headingStyleName)`.
  */
-export function tableToHtml(t: TableState, titleLevel = 0): string {
+export function tableToHtml(
+  t: TableState,
+  titleLevel = 0,
+  labelSep = ": ",
+): string {
   const tree = rowsToPivotTree(bodyGrid(t), t.pivotLevels, t.sortDirs ?? {});
   if (tree.length === 0) return "";
   return renderPivotTree(
@@ -352,6 +356,7 @@ export function tableToHtml(t: TableState, titleLevel = 0): string {
     titleLevel,
     t.pageBreakBefore ?? false,
     t.headingRanks ?? [],
+    labelSep,
   );
 }
 

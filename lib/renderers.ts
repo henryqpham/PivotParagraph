@@ -18,15 +18,17 @@ function escapeHtml(s: string): string {
 /**
  * Build the label prefix `Field name: ` for one field, escaped and optionally
  * wrapped in `<b>`/`<i>`/`<u>` per its `FieldLabel`. Underline wraps ONLY the name
- * (so the ": " separator isn't underlined); bold/italic wrap the whole "name: "
+ * (so the separator isn't underlined); bold/italic wrap the whole "name<sep>"
  * label. The tags are inline runs (they survive a Word "Use Destination Styles"
- * paste); the name is escaped, the tags + separator are machine constants.
+ * paste). `sep` is the document-wide label separator (default ": "; chosen from
+ * an allow-listed select, and escaped here anyway so a future free-text value
+ * can't inject markup).
  */
-function wrapLabel(name: string, lf: FieldLabel): string {
+function wrapLabel(name: string, lf: FieldLabel, sep: string): string {
   const namePart = lf.underline
     ? `<u>${escapeHtml(name)}</u>`
     : escapeHtml(name);
-  let html = `${namePart}: `;
+  let html = `${namePart}${escapeHtml(sep)}`;
   if (lf.italic) html = `<i>${html}</i>`;
   if (lf.bold) html = `<b>${html}</b>`;
   return html;
@@ -282,6 +284,7 @@ export function renderPivotTree(
   titleLevel = 0,
   pageBreakBefore = false,
   headingRanks: number[] = [],
+  labelSep = ": ",
 ): string {
   const numbered = numbering.mode === "multilevel";
   // Precompute each numbered node's display number (transparent hidden levels, top
@@ -331,7 +334,7 @@ export function renderPivotTree(
       node.lines.forEach((line, j) => {
         const lf = fieldLabels[line.col] ?? DEFAULT_FIELD_LABEL;
         const showLabel = lf.show && line.name !== "";
-        const label = showLabel ? wrapLabel(line.name, lf) : "";
+        const label = showLabel ? wrapLabel(line.name, lf, labelSep) : "";
         const value = escapeHtml(line.value);
         // First line only: the level's number (when shown) else its marker (only
         // when numbering is off). A heading row shows neither (Word numbers it); a

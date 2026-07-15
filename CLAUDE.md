@@ -3,7 +3,7 @@
 
 Client-side Next.js app: paste one or more Excel/Sheets tables; each is restructured into an Excel-pivot-style **nested outline** ("Rows area" — ordered indent levels, each holding ≥1 stacked fields; rows nest and merge by level), rendered as Word-ready HTML, and copied to the clipboard per section. Solves: wide tables don't fit an 8.5x11 Word page. The title and any heading-marked levels map to real Word Heading styles; all other body rows use the app's own inline per-level styling (11pt black default, font inherited from the ⚙ Body font — Arial unless changed — with a per-level Look pin).
 
-UI is a 4-pane IDE layout: top command band (⚙ Document popover — global body font / indent / reset), left **Sections rail** (each table = its OWN standalone Word document; drag-reorder, ⧉ duplicate, ✕ remove), center builder, pinned right preview (Preview / Table / JSON). Export is per-section **Copy section** (clipboard only). Workspace auto-saves to `localStorage` (local-only); undo/redo; first-run onboarding + paste-anywhere.
+UI is a 4-pane IDE layout: top command band (⚙ Document popover — global body font / line spacing / label separator / indent / reset), left **Sections rail** (each table = its OWN standalone Word document; drag-reorder, ⧉ duplicate, ✕ remove), center builder, pinned right preview (Preview / Table / JSON). Export is per-section **Copy section** (clipboard only). Workspace auto-saves to `localStorage` (local-only); undo/redo; first-run onboarding + paste-anywhere.
 
 **Detailed docs live in `docs/` — OVERVIEW.md (product + features), ARCHITECTURE.md (data model, pipeline, clipboard/Word mechanics), ROADMAP.md. Read the relevant one before non-trivial changes. Keep THIS file lean: pointers and rules, not prose.**
 
@@ -29,7 +29,7 @@ Pipeline per table: paste → `parseClipboard` (Grid) → `rowsToPivotTree` (`Pi
 - `app/page.tsx` — mounts the full-height `PasteInput` shell
 - `components/PasteInput.tsx` — app shell + parent state: `tables[]`, shared level/title styles, active preview + view toggle, persistence, undo/redo, reorder/duplicate, copy confirmation, onboarding, paste-anywhere, Ctrl+Enter copy, arrangement-reuse offer (`headerSignature` match on ingest)
 - `components/SectionsRail.tsx` — left rail (select / drag + keyboard reorder / duplicate / remove)
-- `components/TableCard.tsx` — center builder: Section Header group (title text + Heading dropdown + shared title look) and Levels group (Add-fields pool, Structure tree with ◄ ► ▲ ▼ ✕ + label/sort toggles, Markers control + blank-line/page-break checkboxes, per-level matrix: Marker/Number (a "Word numbers" note on heading levels), Word heading + Auto/H1–H9 rank chip-dropdown, Look columns)
+- `components/TableCard.tsx` — center builder: Section Title group (title text + Word-heading dropdown incl. a **Custom style…** text input for any destination style name + shared title look; renamed from "Section Header" — "header" was overloaded) and Levels group (Add-fields pool, Structure tree with ◄ ► ▲ ▼ ✕ + label/sort toggles, Markers control + blank-line/page-break checkboxes, per-level matrix: Marker/Number (a "Word numbers" note on heading levels), Word heading + Auto/H1–H9 rank chip-dropdown, Look columns)
 - `components/tableModel.ts` — `TableState`, `tableToHtml`, bucket helpers, `MAX_LEVELS = 9`, `dropEmptyColumns`, `bodyGrid`, `newTable`, example grid, `estimateSectionStats`, `LevelInput`/`DEFAULT_LEVEL`
 - `components/RenderedPreview.tsx` / `GridTable.tsx` / `JsonPreview.tsx` — right-pane views (rendered paper proxy / raw grid / raw JSON). The Header-row picker was removed by request; `headerRow?` remains a legacy field honored on read.
 - `components/Popover.tsx` — shared popover helper
@@ -45,7 +45,7 @@ Pipeline per table: paste → `parseClipboard` (Grid) → `rowsToPivotTree` (`Pi
 - 9-level depth cap (`MAX_LEVELS`) is enforced end-to-end: builder stacks past it, renderer clamps `data-level`, preview has exactly 9 rules, `buildWordHtml` matches only 1–9.
 - Word heading mapping uses REAL `<h1>`–`<h6>` elements whose `<style>` rule declares the FULL source look (mso-style-name/outline-level + color/font/size/bold): declared props are cleanly REPLACED by the destination Heading style on a Use-Destination-Styles/default paste, undeclared ones ride along as polluting direct formatting; a Keep-Source-Formatting paste never maps named styles (rows land Normal + outline level = nav pane) and shows the declared look instead — verified empirically against desktop Word (COM paste matrix, July 2026). Every other body row gets INLINE direct formatting so it survives any paste. K 7–9 fall back to the Mso class rule.
 - Level styles are GLOBAL by depth — slot = `bucket + (sectionTitle ? 1 : 0)`, matching the renderer; Marker / Word-heading are per-table.
-- All style inputs are form-controlled (hex color, allow-listed `FONTS`, clamped numbers) — no free user text lands in a `style`/`class` attribute.
+- All style inputs are form-controlled (hex color, allow-listed `FONTS`/separators/spacings, clamped numbers); the ONE free-text style input — the custom title style name — is allow-list sanitized by `sanitizeStyleName` (letters/digits/space/`._-`) before it lands in `mso-style-name`.
 
 ## Escalation
 - Autonomous: write code, run dev/build/lint, fix type errors.

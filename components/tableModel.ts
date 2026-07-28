@@ -7,6 +7,7 @@ import {
   DEFAULT_NUMBERING,
   renderPivotTree,
   type MarkerKind,
+  type MarkerSpec,
   type NumberingConfig,
 } from "@/lib/renderers";
 import type { FieldLabel, Grid } from "@/lib/types";
@@ -23,8 +24,18 @@ export type TableState = {
    * composite group. Columns in no bucket are unused (hidden).
    */
   pivotLevels: number[][];
-  /** Marker style per indent level (index = level − 1; sparse → default cycle). */
-  markers: MarkerKind[];
+  /**
+   * Per-level marker as split TYPE + DELIMITER (index = level − 1; sparse →
+   * default cycle). Read via `resolveMarkerSpecs(t)`, which also migrates the
+   * LEGACY fused `markers?: MarkerKind[]` from older sessions/exports.
+   */
+  markerSpecs?: MarkerSpec[];
+  /**
+   * LEGACY fused marker per indent level (`"1."`/`"a)"`/…). Kept optional so old
+   * `localStorage` sessions and `.json` imports still load; migrated to
+   * `markerSpecs` on read by `resolveMarkerSpecs`. Never written by new code.
+   */
+  markers?: MarkerKind[];
   /**
    * Per-field label look, keyed by grid column index (so it persists when a field
    * is removed and re-added). Absent col → the default (label shown, plain).
@@ -97,6 +108,8 @@ export type LevelInput = {
   font: string;
   sizeInput: string;
   bold: boolean;
+  italic?: boolean;
+  underline?: boolean;
 };
 /** Default look for an untouched level: 11pt black, font INHERITED from the
  *  document-wide Body font ("" = inherit — the ⚙ Document popover's Body font
@@ -108,6 +121,8 @@ export const DEFAULT_LEVEL: LevelInput = {
   font: "",
   sizeInput: "11",
   bold: false,
+  italic: false,
+  underline: false,
 };
 
 /**
@@ -283,7 +298,7 @@ export function newTable(id: string, grid: Grid): TableState {
     id,
     grid,
     pivotLevels: [],
-    markers: [],
+    markerSpecs: [],
     fieldLabels: {},
     sortDirs: {},
     breakAfter: [],
@@ -325,6 +340,49 @@ export function makeExampleTable(id: string): TableState {
   };
 }
 
+/** Migrate one LEGACY fused `MarkerKind` to the split {type, delim} spec. */
+export function migrateMarkerKind(k: MarkerKind): MarkerSpec {
+  switch (k) {
+    case "decimal":
+      return { type: "decimal", delim: "dot" };
+    case "paren":
+      return { type: "decimal", delim: "paren" };
+    case "upperAlpha":
+      return { type: "upperAlpha", delim: "dot" };
+    case "lowerAlpha":
+      return { type: "lowerAlpha", delim: "dot" };
+    case "upperRoman":
+      return { type: "upperRoman", delim: "dot" };
+    case "lowerRoman":
+      return { type: "lowerRoman", delim: "dot" };
+    // Symbol/none types ignore the delimiter, but default it to "dot" (like a
+    // fresh level) so switching the Type dropdown to a counter yields "1." not
+    // a bare "1".
+    case "bullet":
+      return { type: "bullet", delim: "dot" };
+    case "dash":
+      return { type: "dash", delim: "dot" };
+    case "none":
+      return { type: "none", delim: "dot" };
+  }
+}
+
+/**
+ * The per-level marker specs for a table: `markerSpecs` when present, else the
+ * migrated LEGACY `markers`, else empty (renderer fills the default cycle). One
+ * read-time normalizer so old sessions, imports, and new edits all funnel to the
+ * same {type, delim}[] shape. Sparse holes are preserved (→ default per depth).
+ */
+export function resolveMarkerSpecs(t: TableState): MarkerSpec[] {
+  // An EMPTY markerSpecs is "nothing set yet" (newTable writes `[]`), so fall
+  // through to any legacy `markers` rather than treating `[]` as authoritative
+  // and silently dropping a co-present legacy array (an import edge case).
+  if (t.markerSpecs && t.markerSpecs.length > 0) return t.markerSpecs;
+  return (t.markers ?? []).map((k) =>
+    k ? migrateMarkerKind(k) : (undefined as unknown as MarkerSpec),
+  );
+}
+
 /**
  * parse -> nest -> render for one table. The optional Section title maps to a
  * Word heading (in `buildWordHtml`); the body is always app-styled paragraphs.
@@ -348,7 +406,7 @@ export function tableToHtml(
   return renderPivotTree(
     tree,
     t.sectionTitle.trim() || undefined,
-    t.markers,
+    resolveMarkerSpecs(t),
     t.fieldLabels ?? {},
     t.breakAfter ?? [],
     t.numbering ?? DEFAULT_NUMBERING,

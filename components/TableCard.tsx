@@ -1,8 +1,21 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { headingLevel } from "@/lib/clipboard";
-import { defaultMarker, type MarkerKind } from "@/lib/renderers";
+import {
+  defaultMarkerSpec,
+  isCounterType,
+  type MarkerType,
+  type MarkerDelim,
+} from "@/lib/renderers";
 import { DEFAULT_FIELD_LABEL, type FieldLabel } from "@/lib/types";
 import { Popover } from "./Popover";
 import {
@@ -15,6 +28,7 @@ import {
   removeField,
   unusedColumns,
   bodyGrid,
+  resolveMarkerSpecs,
   DEFAULT_LEVEL,
   MAX_LEVELS,
   type LevelInput,
@@ -53,17 +67,25 @@ const HEADING_OPTIONS = [
 /** Dropdown sentinel for "map the title to a custom destination style name". */
 const CUSTOM_HEADING = "__custom__";
 
-/** Marker styles offered per indent level, with a sample label. */
-const MARKER_OPTIONS: { kind: MarkerKind; label: string }[] = [
-  { kind: "decimal", label: "1." },
-  { kind: "paren", label: "1)" },
-  { kind: "upperAlpha", label: "A." },
-  { kind: "lowerAlpha", label: "a." },
-  { kind: "upperRoman", label: "I." },
-  { kind: "lowerRoman", label: "i." },
-  { kind: "bullet", label: "• bullet" },
-  { kind: "dash", label: "– dash" },
-  { kind: "none", label: "None" },
+/** Marker COUNTER types, labeled by the glyph they produce (narrow for the
+ *  matrix). Split from the delimiter so any type × any delimiter is reachable. */
+const MARKER_TYPE_OPTIONS: { value: MarkerType; label: string }[] = [
+  { value: "decimal", label: "1" },
+  { value: "lowerAlpha", label: "a" },
+  { value: "upperAlpha", label: "A" },
+  { value: "lowerRoman", label: "i" },
+  { value: "upperRoman", label: "I" },
+  { value: "bullet", label: "•" },
+  { value: "dash", label: "–" },
+  { value: "none", label: "None" },
+];
+/** Marker DELIMITER glued after a counter (disabled for symbol/none types).
+ *  "None" is spelled out rather than drawn as an em-dash: a "—" glyph reads like a
+ *  dash you'd GET after the number, when it actually means no delimiter at all. */
+const MARKER_DELIM_OPTIONS: { value: MarkerDelim; label: string }[] = [
+  { value: "dot", label: "." },
+  { value: "paren", label: ")" },
+  { value: "none", label: "None" },
 ];
 
 // ---- Fluent control recipes (shared) --------------------------------------
@@ -77,6 +99,143 @@ const FIELD =
   "h-8 rounded border border-border-strong bg-surface px-2.5 text-sm text-foreground outline-none transition-colors hover:border-b-[color:var(--text-secondary)] focus:border-accent";
 const BADGE =
   "rounded-sm bg-[color:color-mix(in_srgb,var(--muted)_14%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted";
+// Toggle button (B/I/U/sort/Aa): brand-tinted "pressed-in" when active. Module-
+// level so both TableCardInner and the shared LookControl use the one recipe.
+const tgl = (active: boolean) =>
+  `flex h-7 min-w-7 items-center justify-center rounded border px-1.5 text-xs transition-colors disabled:opacity-40 ${
+    active
+      ? "border-accent bg-accent-subtle text-accent-text"
+      : "border-transparent text-text-secondary hover:bg-surface-alt hover:text-foreground"
+  }`;
+
+/**
+ * The shared per-target text "Look" control: a color swatch + an "Aa▾" trigger
+ * that opens a popover with Font / Size / B / I / U — used IDENTICALLY for the
+ * Section Title and every per-level row, so "the same thing looks the same"
+ * (Word's one-Modify-Style-dialog model). `value`/`onChange` fit both the
+ * title's `TitleInput` and a level's `LevelInput`. `bodyFontOption` (level rows
+ * only) prepends a "Body font (…)" inherit choice; the title always picks a real
+ * font. Open state is controlled by the parent so only one popover shows at once.
+ */
+type LookValue = {
+  font: string;
+  sizeInput: string;
+  color: string;
+  bold: boolean;
+  italic?: boolean;
+  underline?: boolean;
+};
+function LookControl({
+  value,
+  onChange,
+  open,
+  onOpenChange,
+  label,
+  bodyFontOption,
+}: {
+  value: LookValue;
+  onChange: (patch: Partial<LookValue>) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  label: string;
+  bodyFontOption?: string;
+}) {
+  return (
+    <div className="relative flex items-center gap-1">
+      <input
+        type="color"
+        value={value.color}
+        onChange={(e) => onChange({ color: e.target.value })}
+        aria-label={`${label} text color (all tables)`}
+        title="Text color · all tables"
+        className="h-6 w-6 cursor-pointer rounded border border-border-strong"
+      />
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        aria-expanded={open}
+        aria-label={`${label} font, size, and emphasis (all tables)`}
+        title="Font · size · bold · italic · underline · all tables"
+        className="rounded border border-border-strong bg-surface px-1 text-[11px] font-semibold text-text-secondary transition-colors hover:border-accent hover:text-accent-text"
+      >
+        Aa▾
+      </button>
+      <Popover open={open} onClose={() => onOpenChange(false)}>
+        <div className="flex w-52 flex-col gap-2 text-sm text-text-secondary">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+            {label} look
+            <span className="ml-1 font-normal normal-case text-accent-text">
+              · all tables
+            </span>
+          </div>
+          <label className="flex items-center justify-between gap-3">
+            Font
+            <select
+              value={value.font}
+              onChange={(e) => onChange({ font: e.target.value })}
+              aria-label={`${label} font${bodyFontOption ? " (empty = the document Body font)" : ""}`}
+              className={FIELD}
+            >
+              {bodyFontOption !== undefined && (
+                <option value="">Body font ({bodyFontOption})</option>
+              )}
+              {FONTS.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-3">
+            Size (pt)
+            <input
+              type="text"
+              inputMode="numeric"
+              value={value.sizeInput}
+              onChange={(e) =>
+                onChange({ sizeInput: e.target.value.replace(/[^0-9]/g, "") })
+              }
+              aria-label={`${label} size in points`}
+              className={`${FIELD} w-16`}
+            />
+          </label>
+          {/* B / I / U as toggle buttons — the ONE emphasis convention across
+              the whole tool (title, levels, and the field-label toggles all use
+              this button style). */}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-pressed={value.bold}
+              title={`Bold ${label}`}
+              onClick={() => onChange({ bold: !value.bold })}
+              className={`${tgl(!!value.bold)} font-bold`}
+            >
+              B
+            </button>
+            <button
+              type="button"
+              aria-pressed={!!value.italic}
+              title={`Italicize ${label}`}
+              onClick={() => onChange({ italic: !value.italic })}
+              className={`${tgl(!!value.italic)} italic`}
+            >
+              I
+            </button>
+            <button
+              type="button"
+              aria-pressed={!!value.underline}
+              title={`Underline ${label}`}
+              onClick={() => onChange({ underline: !value.underline })}
+              className={`${tgl(!!value.underline)} underline`}
+            >
+              U
+            </button>
+          </div>
+        </div>
+      </Popover>
+    </div>
+  );
+}
 
 /** Per-row Windows-Explorer connector state, derived from the flat depth list. */
 type RowGuides = {
@@ -179,8 +338,9 @@ function TableCardInner({
   // Start-number field held as a string so it can be cleared/retyped (the card is
   // keyed by table id, so this resets per table).
   const [startInput, setStartInput] = useState(String(table.numbering.start));
-  // Which per-level "Look" popover (by level index) is open, or null.
-  const [openPop, setOpenPop] = useState<number | null>(null);
+  // Which "Look" popover is open, keyed "title" or `lvl-<i>`, or null. One key
+  // space so only ONE Look popover (title OR a level) shows at a time.
+  const [openPop, setOpenPop] = useState<string | null>(null);
   // A plain-text filter over the Add-fields pool, only shown once it's long enough
   // to need one (a wide spreadsheet can have dozens of columns).
   const [fieldFilter, setFieldFilter] = useState("");
@@ -233,6 +393,18 @@ function TableCardInner({
     return out;
   }, [pivotLevels, table.headingLevels, table.headingRanks, headingBase]);
 
+  // Per-level marker specs (split type + delimiter), migrated from any legacy
+  // fused `markers`. Patch one level's type or delimiter and write the whole
+  // (normalized) array back so a legacy source is upgraded on first edit.
+  const markerSpecs = resolveMarkerSpecs(table);
+  const setMarkerSpec = (i: number, patch: Partial<{ type: MarkerType; delim: MarkerDelim }>) => {
+    const next = [...markerSpecs];
+    next[i] = { ...(next[i] ?? defaultMarkerSpec(i + 1)), ...patch };
+    // Drop any legacy `markers` we just superseded so the table doesn't persist
+    // both shapes (markerSpecs is authoritative from here on).
+    onChange({ markerSpecs: next, markers: undefined });
+  };
+
   // Field names come from the EFFECTIVE header row (bodyGrid honors a header offset
   // set in the Table view), so skipping banner rows renames the fields everywhere.
   const headers = useMemo(() => {
@@ -255,11 +427,14 @@ function TableCardInner({
     : unused;
 
   const placed = useMemo(() => {
-    const out: { col: number; b: number; fi: number }[] = [];
+    // `k` = the field's index WITHIN its bucket. k === 0 is the level OWNER — the
+    // one row that carries the per-level controls (marker / heading / look); a
+    // stacked sibling (k > 0) shows only field controls + a "shares level" note.
+    const out: { col: number; b: number; fi: number; k: number }[] = [];
     let fi = 0;
     pivotLevels.forEach((bucket, b) =>
-      bucket.forEach((col) => {
-        out.push({ col, b, fi });
+      bucket.forEach((col, k) => {
+        out.push({ col, b, fi, k });
         fi++;
       }),
     );
@@ -267,6 +442,49 @@ function TableCardInner({
   }, [pivotLevels]);
 
   const guides = useMemo(() => rowGuides(placed), [placed]);
+
+  // First data row — one representative value per column, for the live
+  // micro-preview that renders each field styled in its level's real look.
+  const sampleRow = useMemo(() => bodyGrid(table)[1] ?? [], [table]);
+
+  // The resolved on-page look for a bucket's rows (mirrors the renderer/preview):
+  // the shared per-depth level style, its font falling back to the Body font.
+  const levelLook = (b: number): CSSProperties => {
+    const lv = appearance.levelStyles[levelIdxForBucket(b)] ?? DEFAULT_LEVEL;
+    return {
+      color: lv.color || "#000000",
+      fontFamily: lv.font || appearance.bodyFont,
+      fontWeight: lv.bold ? 700 : 400,
+      fontStyle: lv.italic ? "italic" : "normal",
+      textDecoration: lv.underline ? "underline" : "none",
+    };
+  };
+
+  // ---- "What just moved?" highlight ----------------------------------------
+  // Reordering/indenting shifts a row out from under the cursor, which makes it
+  // easy to lose track of the field you're arranging. The row a change just
+  // affected stays tinted for a beat. Re-arming the timer on every change keeps
+  // it lit CONTINUOUSLY through a burst of clicks (rather than restarting a
+  // flash each time), so holding ▲ reads as one moving highlight.
+  const [flashCol, setFlashCol] = useState<number | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashRow = (col: number) => {
+    setFlashCol(col);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashCol(null), 1100);
+  };
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+    },
+    [],
+  );
+
+  /** Apply a `pivotLevels` change AND highlight the field it acted on. */
+  const applyMove = (col: number, next: number[][]) => {
+    onChange({ pivotLevels: next });
+    flashRow(col);
+  };
 
   function patchLabel(col: number, patch: Partial<FieldLabel>) {
     const cur = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
@@ -287,13 +505,7 @@ function TableCardInner({
   // Icon button (◄►▲▼✕) — Fluent subtle, now visible (not the old /40).
   const icon =
     "flex h-6 w-6 items-center justify-center rounded text-muted transition-colors hover:bg-surface-alt hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
-  // Toggle button (Aa/B/I/U/sort): brand-tinted "pressed-in" when active.
-  const tgl = (active: boolean) =>
-    `flex h-7 min-w-7 items-center justify-center rounded border px-1.5 text-xs transition-colors disabled:opacity-40 ${
-      active
-        ? "border-accent bg-accent-subtle text-accent-text"
-        : "border-transparent text-text-secondary hover:bg-surface-alt hover:text-foreground"
-    }`;
+  // `tgl` (the B/I/U/sort toggle recipe) is now module-level — shared with LookControl.
 
   return (
     <div className="flex flex-col gap-4">
@@ -317,131 +529,87 @@ function TableCardInner({
               className={`${FIELD} w-56`}
             />
           </div>
-          {/* The "All tables" scope badge lives stacked IN the label cell (not at
-              the row's end) so a narrow center pane never wraps it onto its own
-              orphaned line. */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="flex w-20 shrink-0 flex-col text-xs text-text-secondary">
-              Word heading
-              <span className={`${BADGE} mt-0.5 self-start`}>All tables</span>
-            </span>
-            {/* Hybrid control: the dropdown is the safe, verified fast path
-                (built-in Heading 1–4 map as real <hN> in every paste mode);
-                "Custom style…" reveals a text input for mapping the title to ANY
-                named style in the destination template (e.g. TBL_TITLE) — the
-                legacy mso-style-name route, which maps on a Use-Destination-
-                Styles paste and requires the name to exist in the template. */}
-            <select
-              value={customHeading ? CUSTOM_HEADING : headingStyleName}
-              onChange={(e) => {
-                if (e.target.value === CUSTOM_HEADING) {
-                  // Start blank (= unmapped) until a real name is typed, so a
-                  // half-configured custom style never silently emits.
-                  setCustomHeading(true);
-                  onHeadingStyleChange("");
-                } else {
-                  setCustomHeading(false);
-                  onHeadingStyleChange(e.target.value);
-                }
-              }}
-              aria-label="Word heading style for the title"
-              className={FIELD}
-            >
-              {HEADING_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-              <option value={CUSTOM_HEADING}>Custom style…</option>
-            </select>
-            {customHeading && (
-              <>
-                <input
-                  type="text"
-                  value={headingStyleName}
-                  onChange={(e) => onHeadingStyleChange(e.target.value)}
-                  placeholder="Style name, e.g. TBL_TITLE"
-                  maxLength={60}
-                  aria-label="Custom destination style name for the title"
-                  className={`${FIELD} w-52`}
-                />
-                <span className="basis-full pl-[88px] text-[11px] leading-snug text-muted">
-                  Must match a style that exists in the destination document —
-                  maps on a <strong>Use Destination Styles</strong>{" "}paste.
-                </span>
-              </>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="flex w-20 shrink-0 flex-col text-xs text-text-secondary">
-              Look
-              <span className={`${BADGE} mt-0.5 self-start`}>All tables</span>
-            </span>
-            <select
-              value={title.font}
-              onChange={(e) => onTitleChange({ font: e.target.value })}
-              aria-label="Title font"
-              className={FIELD}
-            >
-              {FONTS.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={title.sizeInput}
-              onChange={(e) =>
-                onTitleChange({ sizeInput: e.target.value.replace(/[^0-9]/g, "") })
-              }
-              aria-label="Title size in points"
-              className={`${FIELD} w-14 text-center`}
-            />
-            <div className="flex gap-0.5">
-              <button
-                type="button"
-                aria-pressed={title.bold}
-                title="Bold the title"
-                onClick={() => onTitleChange({ bold: !title.bold })}
-                className={`${tgl(title.bold)} font-bold`}
+          {/* Word heading + Look share ONE row: both are compact now (a select
+              and a swatch+Aa▾), so pairing them fills the width instead of
+              leaving two sparse rows. Each keeps its own "All tables" badge
+              stacked under its label. The custom-style input/hint wraps below. */}
+          <div className="flex flex-wrap items-start gap-x-8 gap-y-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex flex-col text-xs text-text-secondary">
+                Word heading
+                <span className={`${BADGE} mt-0.5 self-start`}>All tables</span>
+              </span>
+              {/* Hybrid control: the dropdown is the safe, verified fast path
+                  (built-in Heading 1–4 map as real <hN> in every paste mode);
+                  "Custom style…" reveals a text input for mapping the title to
+                  ANY named style in the destination template (e.g. TBL_TITLE) —
+                  the legacy mso-style-name route, which maps on a Use-
+                  Destination-Styles paste and needs the name to exist there. */}
+              <select
+                value={customHeading ? CUSTOM_HEADING : headingStyleName}
+                onChange={(e) => {
+                  if (e.target.value === CUSTOM_HEADING) {
+                    // Start blank (= unmapped) until a real name is typed, so a
+                    // half-configured custom style never silently emits.
+                    setCustomHeading(true);
+                    onHeadingStyleChange("");
+                  } else {
+                    setCustomHeading(false);
+                    onHeadingStyleChange(e.target.value);
+                  }
+                }}
+                aria-label="Word heading style for the title"
+                className={FIELD}
               >
-                B
-              </button>
-              <button
-                type="button"
-                aria-pressed={title.italic}
-                title="Italicize the title"
-                onClick={() => onTitleChange({ italic: !title.italic })}
-                className={`${tgl(title.italic)} italic`}
-              >
-                I
-              </button>
-              <button
-                type="button"
-                aria-pressed={title.underline}
-                title="Underline the title"
-                onClick={() => onTitleChange({ underline: !title.underline })}
-                className={`${tgl(title.underline)} underline`}
-              >
-                U
-              </button>
+                {HEADING_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+                <option value={CUSTOM_HEADING}>Custom style…</option>
+              </select>
+              {customHeading && (
+                <>
+                  <input
+                    type="text"
+                    value={headingStyleName}
+                    onChange={(e) => onHeadingStyleChange(e.target.value)}
+                    placeholder="Style name, e.g. TBL_TITLE"
+                    maxLength={60}
+                    aria-label="Custom destination style name for the title"
+                    className={`${FIELD} w-52`}
+                  />
+                  <span className="basis-full text-[11px] leading-snug text-muted">
+                    Must match a style that exists in the destination document —
+                    maps on a <strong>Use Destination Styles</strong>{" "}paste.
+                  </span>
+                </>
+              )}
             </div>
-            <input
-              type="color"
-              value={title.color}
-              onChange={(e) => onTitleChange({ color: e.target.value })}
-              aria-label="Title color"
-              className="h-7 w-8 cursor-pointer rounded border border-border-strong"
-            />
+            {/* Look — the SAME shared control the per-level rows use (swatch +
+                Aa▾ popover), so the title and the levels read as one system. */}
+            <div className="flex items-center gap-2">
+              <span className="flex flex-col text-xs text-text-secondary">
+                Look
+                <span className={`${BADGE} mt-0.5 self-start`}>All tables</span>
+              </span>
+              <LookControl
+                value={title}
+                onChange={onTitleChange}
+                open={openPop === "title"}
+                onOpenChange={(o) => setOpenPop(o ? "title" : null)}
+                label={table.sectionTitle.trim() || "Title"}
+              />
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ---- LEVELS group (the per-level structure + numbering + markers) ---- */}
+      {/* ---- ROWS group (STRUCTURE only: which fields, nested how, and each
+             field's own label/sort). Everything that formats a whole LEVEL lives
+             in the separate "Level formatting" card below. ---------------------- */}
       <section className={CARD}>
-        <h2 className={GROUP_HEADER}>Levels</h2>
+        <h2 className={GROUP_HEADER}>Rows</h2>
 
         {headers.length === 0 ? (
           <p className="text-sm text-muted">Paste a table to build the outline.</p>
@@ -486,8 +654,9 @@ function TableCardInner({
                     key={col}
                     type="button"
                     onClick={() =>
-                      onChange({ pivotLevels: addField(pivotLevels, col) })
+                      applyMove(col, addField(pivotLevels, col))
                     }
+                    title="Add as a new deepest level, then use ◄ ► ▲ ▼ to place it"
                     className="h-7 rounded border border-dashed border-border-strong px-2.5 text-xs text-text-secondary transition-colors hover:border-solid hover:border-accent hover:bg-accent-subtle hover:text-accent-text"
                   >
                     + {headers[col] || `Column ${col + 1}`}
@@ -500,7 +669,7 @@ function TableCardInner({
             {placed.length > 0 && (
               <>
                 <div className={`${SUB} flex items-center justify-between gap-2`}>
-                  <span>Structure</span>
+                  <span>Rows</span>
                   <span
                     title="Word supports up to 9 indent levels"
                     className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold normal-case tracking-normal ${
@@ -540,512 +709,529 @@ function TableCardInner({
                     )}
                   </p>
                 )}
-                {/* gap-0 so the vertical tree guides stay continuous row-to-row */}
+                {/* One row per FIELD. The level OWNER (first field of a bucket)
+                    carries the per-level controls (marker / heading / look); a
+                    stacked sibling shows only field controls + a "shares level"
+                    note, so the level-vs-field distinction reads honestly.
+                    Arranged entirely with the ◄ ► ▲ ▼ ✕ buttons (drag-and-drop
+                    was tried and removed — the arrows read as more intuitive and
+                    are keyboard-accessible for free). gap-0 so the tree guides
+                    stay continuous row-to-row. */}
                 <div className="flex flex-col">
-                  {placed.map(({ col, b, fi }) => {
+                  {placed.map(({ col, b, fi, k }) => {
                     const name = headers[col] || `Column ${col + 1}`;
                     const lf = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
                     const g = guides[fi];
+                    const owner = k === 0;
+                    const sample = String(sampleRow[col] ?? "").trim();
                     return (
-                      <div
-                        key={col}
-                        className="flex min-h-[36px] items-center gap-1.5 rounded px-1 hover:bg-surface-alt"
-                      >
-                        {/* Explorer tree-line guides: b ancestor cells + 1 elbow */}
-                        <span aria-hidden className="flex self-stretch">
-                          {g.ancestors.map((cont, a) => (
-                            <GuideCell key={a} kind={cont ? "line" : "blank"} />
-                          ))}
-                          <GuideCell kind={g.last ? "corner" : "tee"} />
-                        </span>
-
-                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-[11px] font-semibold tabular-nums text-muted">
-                          {b + 1}
-                        </span>
-                        <span className="rounded-[3px] bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] px-2 py-0.5 text-xs font-semibold text-foreground">
-                          {name}
-                        </span>
-                        <span className="ml-1 flex items-center gap-0.5">
-                          <button
-                            type="button"
-                            aria-pressed={lf.show}
-                            aria-label={`Show the "${name}:" label`}
-                            title={`Show/hide the "${name}:" label`}
-                            onClick={() => patchLabel(col, { show: !lf.show })}
-                            className={tgl(lf.show)}
+                      <Fragment key={col}>
+                        <div
+                          className={`group flex min-h-[36px] items-center gap-1.5 rounded px-1 transition-colors duration-300 motion-reduce:transition-none ${
+                            flashCol === col
+                              ? "bg-[color:color-mix(in_srgb,var(--accent)_20%,transparent)] ring-1 ring-inset ring-[color:color-mix(in_srgb,var(--accent)_45%,transparent)]"
+                              : "hover:bg-surface-alt"
+                          }`}
+                        >
+                          {/* Explorer tree-line guides: b ancestor cells + 1 elbow */}
+                          <span aria-hidden className="flex self-stretch">
+                            {g.ancestors.map((cont, a) => (
+                              <GuideCell key={a} kind={cont ? "line" : "blank"} />
+                            ))}
+                            <GuideCell kind={g.last ? "corner" : "tee"} />
+                          </span>
+                          {/* Level number pill (dim/blank on a stacked sibling) */}
+                          <span
+                            className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] text-[11px] font-semibold tabular-nums ${
+                              owner
+                                ? "bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-muted"
+                                : "text-transparent"
+                            }`}
                           >
-                            Aa
-                          </button>
-                          <button
-                            type="button"
-                            aria-pressed={lf.bold}
-                            disabled={!lf.show}
-                            aria-label={`Bold the "${name}:" label`}
-                            title="Bold the label"
-                            onClick={() => patchLabel(col, { bold: !lf.bold })}
-                            className={`${tgl(lf.bold)} font-bold`}
-                          >
-                            B
-                          </button>
-                          <button
-                            type="button"
-                            aria-pressed={lf.italic}
-                            disabled={!lf.show}
-                            aria-label={`Italicize the "${name}:" label`}
-                            title="Italicize the label"
-                            onClick={() => patchLabel(col, { italic: !lf.italic })}
-                            className={`${tgl(lf.italic)} italic`}
-                          >
-                            I
-                          </button>
-                          <button
-                            type="button"
-                            aria-pressed={lf.underline}
-                            disabled={!lf.show}
-                            aria-label={`Underline the "${name}:" label`}
-                            title="Underline the label"
-                            onClick={() =>
-                              patchLabel(col, { underline: !lf.underline })
-                            }
-                            className={`${tgl(lf.underline)} underline`}
-                          >
-                            U
-                          </button>
-                          {(() => {
-                            const dir = table.sortDirs[col];
-                            const glyph =
-                              dir === "asc" ? "↑" : dir === "desc" ? "↓" : "↕";
-                            const dirLabel =
-                              dir === "asc"
-                                ? "ascending"
-                                : dir === "desc"
-                                  ? "descending"
-                                  : "off";
-                            return (
-                              <button
-                                type="button"
-                                aria-label={`Sort by ${name} (${dirLabel})`}
-                                title={`Sort groups by ${name} (currently ${dirLabel})`}
-                                onClick={() => cycleSort(col)}
-                                className={tgl(dir !== undefined)}
-                              >
-                                {glyph}
-                              </button>
-                            );
-                          })()}
-                        </span>
-                        <span className="ml-auto flex items-center">
-                          <button
-                            type="button"
-                            aria-label={`Outdent ${name}`}
-                            disabled={!canOutdent(pivotLevels, fi)}
-                            onClick={() =>
-                              onChange({ pivotLevels: outdentField(pivotLevels, fi) })
-                            }
-                            className={icon}
-                          >
-                            ◄
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Indent ${name}`}
-                            disabled={!canIndent(pivotLevels, fi)}
-                            onClick={() =>
-                              onChange({ pivotLevels: indentField(pivotLevels, fi) })
-                            }
-                            className={icon}
-                          >
-                            ►
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Move ${name} up`}
-                            disabled={fi === 0}
-                            onClick={() =>
-                              onChange({ pivotLevels: moveField(pivotLevels, fi, -1) })
-                            }
-                            className={icon}
-                          >
-                            ▲
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Move ${name} down`}
-                            disabled={fi === placed.length - 1}
-                            onClick={() =>
-                              onChange({ pivotLevels: moveField(pivotLevels, fi, 1) })
-                            }
-                            className={icon}
-                          >
-                            ▼
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Remove ${name}`}
-                            onClick={() =>
-                              onChange({ pivotLevels: removeField(pivotLevels, fi) })
-                            }
-                            className={`${icon} ml-0.5`}
-                          >
-                            ✕
-                          </button>
-                        </span>
-                      </div>
+                            {b + 1}
+                          </span>
+                          {/* Field name — a live micro-preview in the level's REAL
+                              look — plus a faint sample value from the first row. */}
+                          <span className="flex min-w-0 flex-1 items-baseline gap-1.5 truncate">
+                            <span
+                              style={levelLook(b)}
+                              title={`Renders in level ${b + 1}'s look`}
+                              className="truncate text-[13px] leading-tight"
+                            >
+                              {name}
+                            </span>
+                            {sample && (
+                              <span className="truncate text-[11px] text-muted">
+                                {sample}
+                              </span>
+                            )}
+                          </span>
+                          {/* Per-FIELD controls: show / bold / italic / underline
+                              the label, then sort — on every row. */}
+                          <span className="flex shrink-0 items-center gap-0.5">
+                            <button
+                              type="button"
+                              aria-pressed={lf.show}
+                              aria-label={`Show the "${name}:" label`}
+                              title={`Show/hide the "${name}:" label`}
+                              onClick={() => patchLabel(col, { show: !lf.show })}
+                              className={tgl(lf.show)}
+                            >
+                              Aa
+                            </button>
+                            <button
+                              type="button"
+                              aria-pressed={lf.bold}
+                              disabled={!lf.show}
+                              aria-label={`Bold the "${name}:" label`}
+                              title="Bold the label"
+                              onClick={() => patchLabel(col, { bold: !lf.bold })}
+                              className={`${tgl(lf.bold)} font-bold`}
+                            >
+                              B
+                            </button>
+                            <button
+                              type="button"
+                              aria-pressed={lf.italic}
+                              disabled={!lf.show}
+                              aria-label={`Italicize the "${name}:" label`}
+                              title="Italicize the label"
+                              onClick={() => patchLabel(col, { italic: !lf.italic })}
+                              className={`${tgl(lf.italic)} italic`}
+                            >
+                              I
+                            </button>
+                            <button
+                              type="button"
+                              aria-pressed={lf.underline}
+                              disabled={!lf.show}
+                              aria-label={`Underline the "${name}:" label`}
+                              title="Underline the label"
+                              onClick={() =>
+                                patchLabel(col, { underline: !lf.underline })
+                              }
+                              className={`${tgl(lf.underline)} underline`}
+                            >
+                              U
+                            </button>
+                            {(() => {
+                              const dir = table.sortDirs[col];
+                              const glyph =
+                                dir === "asc" ? "↑" : dir === "desc" ? "↓" : "↕";
+                              const dirLabel =
+                                dir === "asc"
+                                  ? "ascending"
+                                  : dir === "desc"
+                                    ? "descending"
+                                    : "off";
+                              return (
+                                <button
+                                  type="button"
+                                  aria-label={`Sort by ${name} (${dirLabel})`}
+                                  title={`Sort groups by ${name} (currently ${dirLabel})`}
+                                  onClick={() => cycleSort(col)}
+                                  className={tgl(dir !== undefined)}
+                                >
+                                  {glyph}
+                                </button>
+                              );
+                            })()}
+                          </span>
+                          {/* A stacked sibling notes which level it shares. All
+                              per-LEVEL controls (marker / heading / look) live in
+                              the "Level formatting" card below, so this row stays
+                              purely about the FIELD. */}
+                          {!owner && (
+                            <span
+                              className="shrink-0 border-l border-border pl-2 text-[11px] italic text-muted"
+                              title={`Stacked at level ${b + 1} — its marker, heading, and look are set on level ${b + 1} under Level formatting`}
+                            >
+                              shares level {b + 1}
+                            </span>
+                          )}
+                          {/* Actions: outdent / indent / remove (reorder = ⋮ handle) */}
+                          <span className="flex shrink-0 items-center">
+                            <button
+                              type="button"
+                              aria-label={`Outdent ${name}`}
+                              disabled={!canOutdent(pivotLevels, fi)}
+                              onClick={() =>
+                                applyMove(col, outdentField(pivotLevels, fi))
+                              }
+                              className={icon}
+                            >
+                              ◄
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Indent ${name}`}
+                              disabled={!canIndent(pivotLevels, fi)}
+                              onClick={() =>
+                                applyMove(col, indentField(pivotLevels, fi))
+                              }
+                              className={icon}
+                            >
+                              ►
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Move ${name} up`}
+                              title="Move up"
+                              disabled={fi === 0}
+                              onClick={() =>
+                                applyMove(col, moveField(pivotLevels, fi, -1))
+                              }
+                              className={icon}
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Move ${name} down`}
+                              title="Move down"
+                              disabled={fi === placed.length - 1}
+                              onClick={() =>
+                                applyMove(col, moveField(pivotLevels, fi, 1))
+                              }
+                              className={icon}
+                            >
+                              ▼
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Remove ${name}`}
+                              title="Remove this field"
+                              onClick={() =>
+                                onChange({
+                                  pivotLevels: removeField(pivotLevels, fi),
+                                })
+                              }
+                              className={`${icon} ml-0.5`}
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        </div>
+                      </Fragment>
                     );
                   })}
                 </div>
               </>
             )}
 
-            {/* Numbering */}
-            {pivotLevels.length > 0 && (
-              <>
-                <div className={SUB}>Markers</div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={table.numbering.mode}
-                    onChange={(e) =>
-                      onChange({
-                        numbering: {
-                          ...table.numbering,
-                          mode: e.target.value as "off" | "custom" | "multilevel",
-                        },
-                      })
-                    }
-                    aria-label="Marker / numbering mode"
-                    className={FIELD}
-                  >
-                    <option value="off">Off (none)</option>
-                    <option value="custom">Custom (per level)</option>
-                    <option value="multilevel">Multilevel numbers</option>
-                  </select>
-                  {table.numbering.mode === "multilevel" && (
-                    <>
-                      <span className="text-xs text-text-secondary">Start</span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={startInput}
-                        onChange={(e) => {
-                          const cleaned = e.target.value.replace(/[^0-9.]/g, "");
-                          setStartInput(cleaned);
-                          if (/^\d+(\.\d+)*$/.test(cleaned)) {
-                            onChange({
-                              numbering: { ...table.numbering, start: cleaned },
-                            });
-                          }
-                        }}
-                        onBlur={() => {
-                          if (!/^\d+(\.\d+)*$/.test(startInput)) {
-                            setStartInput(table.numbering.start);
-                          }
-                        }}
-                        aria-label="Starting number for the first item, e.g. 5.1"
-                        title="The exact number of the first item (e.g. 5.1 → 5.1, 5.1.1)"
-                        className={`${FIELD} w-20`}
-                      />
-                    </>
-                  )}
-                  <label className="ml-1 flex items-center gap-1.5 border-l border-border pl-3 text-xs text-text-secondary">
-                    <input
-                      type="checkbox"
-                      checked={table.breakAfter[0] === true}
-                      onChange={(e) =>
-                        onChange({ breakAfter: e.target.checked ? [true] : [] })
-                      }
-                      aria-label="Blank line between top-level groups"
-                      title="Add a blank line after each top-level group (this section)"
-                      className="accent-[var(--accent)]"
-                    />
-                    Blank line between top-level groups
-                  </label>
-                  <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-                    <input
-                      type="checkbox"
-                      checked={table.pageBreakBefore === true}
-                      onChange={(e) =>
-                        onChange({ pageBreakBefore: e.target.checked })
-                      }
-                      aria-label="Start each top-level group on a new Word page"
-                      title="Insert a Word page break before each top-level group (this section)"
-                      className="accent-[var(--accent)]"
-                    />
-                    New page per group
-                  </label>
-                </div>
-              </>
-            )}
-
-            {/* Per-level matrix: one row per indent level (all PER-TABLE) — its
-                marker (or "show number" toggle when numbering is on) and Word-heading
-                mapping, aligned to the SAME numbered pill as Structure so a level
-                reads as one object across the card. The "blank line between top-level
-                groups" toggle now lives once beside Markers (no per-level Gap column);
-                every column here is this-section scope. */}
-            {pivotLevels.length > 0 && (
-              <>
-                <div className={SUB}>Per-level</div>
-                <div>
-                  <div>
-                    <div className="flex items-center gap-2 px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                      <span className="w-[18px] shrink-0" />
-                      <span className="min-w-0 flex-1">Level</span>
-                      {table.numbering.mode !== "off" && (
-                        <span className="w-32 shrink-0">
-                          {table.numbering.mode === "multilevel"
-                            ? "Number"
-                            : "Marker"}
-                        </span>
-                      )}
-                      <span className="w-20 shrink-0 text-center">Heading</span>
-                      <span className="w-20 shrink-0 text-center text-accent-text">
-                        Look
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      {pivotLevels.map((bucket, i) => {
-                        const label = headers[bucket[0]] || `Level ${i + 1}`;
-                        const idx = levelIdxForBucket(i);
-                        const lv = appearance.levelStyles[idx] ?? DEFAULT_LEVEL;
-                        const isHeading = table.headingLevels[i] === true;
-                        const { k: headingK, auto, explicit, skips } =
-                          headingInfo[i];
-                        return (
-                          <div
-                            key={i}
-                            className="flex items-center gap-2 rounded p-1 hover:bg-surface-alt"
-                          >
-                            <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-[11px] font-semibold tabular-nums text-muted">
-                              {i + 1}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-                              {label}
-                            </span>
-                            {/* #/Mark cell — hidden in "off" mode: a per-level
-                                marker select in "custom" mode, or a show-number
-                                checkbox in "multilevel" mode. */}
-                            {table.numbering.mode !== "off" && (
-                              <div className="w-32 shrink-0">
-                                {isHeading ? (
-                                  // A Word-heading level's own marker/number is
-                                  // suppressed (Word numbers those rows on paste),
-                                  // so an active-looking control here would lie.
-                                  <span
-                                    className="block truncate text-xs italic text-muted"
-                                    title="Word supplies this level's number on paste — the app marker/number is suppressed"
-                                  >
-                                    Word numbers
-                                  </span>
-                                ) : table.numbering.mode === "multilevel" ? (
-                                <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-                                  <input
-                                    type="checkbox"
-                                    checked={table.numbering.levels[i] !== false}
-                                    onChange={(e) => {
-                                      const next = [...table.numbering.levels];
-                                      next[i] = e.target.checked;
-                                      onChange({
-                                        numbering: {
-                                          ...table.numbering,
-                                          levels: next,
-                                        },
-                                      });
-                                    }}
-                                    aria-label={`Show the number on level ${i + 1}`}
-                                    className="accent-[var(--accent)]"
-                                  />
-                                  Show number
-                                </label>
-                              ) : (
-                                <select
-                                  value={table.markers[i] ?? defaultMarker(i + 1)}
-                                  onChange={(e) => {
-                                    const next = [...table.markers];
-                                    next[i] = e.target.value as MarkerKind;
-                                    onChange({ markers: next });
-                                  }}
-                                  aria-label={`Marker for level ${i + 1}`}
-                                  className={`${FIELD} w-full`}
-                                >
-                                  {MARKER_OPTIONS.map((o) => (
-                                    <option key={o.kind} value={o.kind}>
-                                      {o.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              )}
-                              </div>
-                            )}
-                            {/* Word heading: checkbox + a rank chip-dropdown.
-                                Auto = the contiguous rank (H2 under a Heading-1
-                                title, etc., never skipping); picking H1–H9
-                                overrides it for template-specific numbering.
-                                Amber when a manual pick skips a rank. */}
-                            <div className="flex w-20 shrink-0 items-center justify-center gap-1">
-                              <input
-                                type="checkbox"
-                                checked={isHeading}
-                                onChange={(e) => {
-                                  const next = [...table.headingLevels];
-                                  next[i] = e.target.checked;
-                                  onChange({ headingLevels: next });
-                                }}
-                                aria-label={
-                                  isHeading
-                                    ? `${label} maps to Word Heading ${headingK} — uncheck to make it body text`
-                                    : `Map ${label} to a Word heading (Navigation pane, collapsible)`
-                                }
-                                title={`Map to a Word heading (Navigation pane, collapsible)`}
-                                className="accent-[var(--accent)]"
-                              />
-                              {/* Rendered always but visibility-hidden when
-                                  unchecked, so the column doesn't jump when a
-                                  box is ticked (hidden = out of tab order too). */}
-                              <select
-                                  value={explicit}
-                                  onChange={(e) => {
-                                    const next = [
-                                      ...(table.headingRanks ?? []),
-                                    ];
-                                    next[i] = Number(e.target.value); // 0 = auto
-                                    onChange({ headingRanks: next });
-                                  }}
-                                  aria-label={`Word heading rank for ${label} (Auto = Heading ${auto})`}
-                                  title={
-                                    skips
-                                      ? `Pastes as Word "Heading ${headingK}" — skips a rank (Word flags gapped outlines)`
-                                      : `Pastes as Word "Heading ${headingK}". Auto follows the checked levels above; pick H1–H9 to pin it.`
-                                  }
-                                  className={`h-6 rounded-sm border px-0.5 text-[10px] font-semibold tabular-nums outline-none transition-colors ${
-                                    isHeading ? "" : "invisible"
-                                  } ${
-                                    skips
-                                      ? "border-[color:color-mix(in_srgb,var(--warning)_55%,transparent)] bg-[color:color-mix(in_srgb,var(--warning)_12%,transparent)] text-[color:var(--warning)]"
-                                      : "border-border-strong bg-accent-subtle text-accent-text hover:border-accent"
-                                  }`}
-                                >
-                                  <optgroup label="Auto (follows levels above)">
-                                    <option value={0}>H{auto}</option>
-                                  </optgroup>
-                                  <optgroup label="Pin to">
-                                    {Array.from({ length: 9 }, (_, n) => (
-                                      <option key={n + 1} value={n + 1}>
-                                        H{n + 1}
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                </select>
-                            </div>
-                            {/* Look (GLOBAL — all tables): color swatch inline +
-                                font/size/bold in a popover. Tinted so the
-                                this-section vs all-tables boundary stays obvious. */}
-                            <div className="relative flex w-20 shrink-0 items-center justify-center gap-1 rounded bg-accent-subtle py-0.5">
-                              <input
-                                type="color"
-                                value={lv.color}
-                                onChange={(e) =>
-                                  appearance.onLevelChange(idx, {
-                                    color: e.target.value,
-                                  })
-                                }
-                                aria-label={`${label} text color (all tables)`}
-                                title="Text color · all tables"
-                                className="h-6 w-6 cursor-pointer rounded border border-border-strong"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setOpenPop((p) => (p === i ? null : i))
-                                }
-                                aria-expanded={openPop === i}
-                                aria-label={`${label} font, size, bold (all tables)`}
-                                title="Font · size · bold · all tables"
-                                className="rounded border border-border-strong bg-surface px-1 text-[11px] font-semibold text-text-secondary transition-colors hover:border-accent hover:text-accent-text"
-                              >
-                                Aa▾
-                              </button>
-                              <Popover
-                                open={openPop === i}
-                                onClose={() => setOpenPop(null)}
-                              >
-                                <div className="flex flex-col gap-2">
-                                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                                    {label} look
-                                    <span className="ml-1 font-normal normal-case text-accent-text">
-                                      · all tables
-                                    </span>
-                                  </div>
-                                  <label className="flex items-center justify-between gap-3">
-                                    Font
-                                    {/* "" = inherit the document-wide Body font
-                                        (the default); picking a font PINS this
-                                        level, mirroring the heading-rank
-                                        Auto/pin pattern. */}
-                                    <select
-                                      value={lv.font}
-                                      onChange={(e) =>
-                                        appearance.onLevelChange(idx, {
-                                          font: e.target.value,
-                                        })
-                                      }
-                                      aria-label={`${label} font (empty = the document Body font)`}
-                                      className={FIELD}
-                                    >
-                                      <option value="">
-                                        Body font ({appearance.bodyFont})
-                                      </option>
-                                      {FONTS.map((f) => (
-                                        <option key={f} value={f}>
-                                          {f}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                  <label className="flex items-center justify-between gap-3">
-                                    Size (pt)
-                                    <input
-                                      type="text"
-                                      inputMode="numeric"
-                                      value={lv.sizeInput}
-                                      onChange={(e) =>
-                                        appearance.onLevelChange(idx, {
-                                          sizeInput: e.target.value.replace(
-                                            /[^0-9]/g,
-                                            "",
-                                          ),
-                                        })
-                                      }
-                                      aria-label={`${label} size in points`}
-                                      className={`${FIELD} w-16`}
-                                    />
-                                  </label>
-                                  <label className="flex items-center gap-1.5">
-                                    <input
-                                      type="checkbox"
-                                      checked={lv.bold}
-                                      onChange={(e) =>
-                                        appearance.onLevelChange(idx, {
-                                          bold: e.target.checked,
-                                        })
-                                      }
-                                      className="accent-[var(--accent)]"
-                                    />
-                                    Bold
-                                  </label>
-                                </div>
-                              </Popover>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
           </div>
         )}
       </section>
+
+      {/* ---- LEVEL FORMATTING card (per-LEVEL: one row per indent level) -----
+          Deliberately SPLIT from the Rows canvas: the Rows list is about the
+          FIELDS (what nests where, and how each field's own `Name:` label reads),
+          while everything that formats a whole LEVEL — its marker/number, its
+          Word-heading mapping, and its look — lives here, mirroring the Section
+          Title card. Keeping them apart is what makes the two scopes legible:
+          the row's Aa/B/I/U touch ONLY the label before the colon, whereas a
+          level's Look restyles the entire line (label AND value).
+          Scope is mixed on purpose and marked per column: Marker + Heading are
+          per-TABLE, the Look is shared by DEPTH across ALL sections. */}
+      {pivotLevels.length > 0 && (
+        <section className={CARD}>
+          <h2 className={GROUP_HEADER}>Level formatting</h2>
+          <div className="flex flex-col gap-1 text-sm text-text-secondary">
+            {/* Markers mode — governs what the MARKER column below means (it is
+                hidden entirely in "off", and becomes a show/hide number toggle in
+                "multilevel"), so it sits directly above that column. */}
+            <div className={`${SUB} !mt-0`}>Markers</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={table.numbering.mode}
+                onChange={(e) =>
+                  onChange({
+                    numbering: {
+                      ...table.numbering,
+                      mode: e.target.value as "off" | "custom" | "multilevel",
+                    },
+                  })
+                }
+                aria-label="Marker / numbering mode"
+                className={FIELD}
+              >
+                <option value="off">Off (none)</option>
+                <option value="custom">Custom (per level)</option>
+                <option value="multilevel">Multilevel numbers</option>
+              </select>
+              {table.numbering.mode === "multilevel" && (
+                <>
+                  <span className="text-xs text-text-secondary">Start</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={startInput}
+                    onChange={(e) => {
+                      const cleaned = e.target.value.replace(/[^0-9.]/g, "");
+                      setStartInput(cleaned);
+                      if (/^\d+(\.\d+)*$/.test(cleaned)) {
+                        onChange({
+                          numbering: { ...table.numbering, start: cleaned },
+                        });
+                      }
+                    }}
+                    onBlur={() => {
+                      if (!/^\d+(\.\d+)*$/.test(startInput)) {
+                        setStartInput(table.numbering.start);
+                      }
+                    }}
+                    aria-label="Starting number for the first item, e.g. 5.1"
+                    title="The exact number of the first item (e.g. 5.1 → 5.1, 5.1.1)"
+                    className={`${FIELD} w-20`}
+                  />
+                </>
+              )}
+              <label className="ml-1 flex items-center gap-1.5 border-l border-border pl-3 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={table.breakAfter[0] === true}
+                  onChange={(e) =>
+                    onChange({ breakAfter: e.target.checked ? [true] : [] })
+                  }
+                  aria-label="Blank line between top-level groups"
+                  title="Add a blank line after each top-level group (this section)"
+                  className="accent-[var(--accent)]"
+                />
+                Blank line between top-level groups
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={table.pageBreakBefore === true}
+                  onChange={(e) => onChange({ pageBreakBefore: e.target.checked })}
+                  aria-label="Start each top-level group on a new Word page"
+                  title="Insert a Word page break before each top-level group (this section)"
+                  className="accent-[var(--accent)]"
+                />
+                New page per group
+              </label>
+            </div>
+
+            {/* One compact row per indent level. Every control stays VISIBLE (no
+                progressive disclosure) so the whole format is adjustable at a
+                glance, and 9 levels still fit on screen. */}
+            <div className={SUB}>Per level</div>
+            <div>
+              <div className="flex items-center gap-2 px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                <span className="w-[18px] shrink-0" />
+                <span className="min-w-0 flex-1">Level</span>
+                {table.numbering.mode !== "off" && (
+                  <span className="w-40 shrink-0">
+                    {table.numbering.mode === "multilevel" ? "Number" : "Marker"}
+                  </span>
+                )}
+                <span className="w-20 shrink-0 text-center">Heading</span>
+                <span
+                  className="w-24 shrink-0 text-center text-accent-text"
+                  title="Shared by DEPTH across every section — changing level 2's look restyles level 2 everywhere"
+                >
+                  Look · all tables
+                </span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {pivotLevels.map((bucket, i) => {
+                  const label = headers[bucket[0]] || `Level ${i + 1}`;
+                  // Stacked siblings share this level, so name them here too —
+                  // the row is honestly "level 2 = Country + State", not just the
+                  // bucket's first field.
+                  const stacked = bucket
+                    .slice(1)
+                    .map((c) => headers[c] || `Column ${c + 1}`);
+                  const idx = levelIdxForBucket(i);
+                  const lv = appearance.levelStyles[idx] ?? DEFAULT_LEVEL;
+                  const isHeading = table.headingLevels[i] === true;
+                  const { k: headingK, auto, explicit, skips } = headingInfo[i];
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 rounded p-1 hover:bg-surface-alt"
+                    >
+                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-[11px] font-semibold tabular-nums text-muted">
+                        {i + 1}
+                      </span>
+                      <span className="flex min-w-0 flex-1 items-baseline gap-1.5 truncate text-xs">
+                        <span className="truncate text-text-secondary">
+                          {label}
+                        </span>
+                        {stacked.length > 0 && (
+                          <span
+                            className="truncate text-[11px] text-muted"
+                            title={`Level ${i + 1} also holds: ${stacked.join(", ")}`}
+                          >
+                            + {stacked.join(", ")}
+                          </span>
+                        )}
+                      </span>
+                      {/* Marker cell — hidden in "off": a per-level marker select
+                          in "custom", or a show-number checkbox in "multilevel". */}
+                      {table.numbering.mode !== "off" && (
+                        <div className="w-40 shrink-0">
+                          {isHeading ? (
+                            // A Word-heading level's own marker/number is
+                            // suppressed (Word numbers those rows on paste), so an
+                            // active-looking control here would lie.
+                            <span
+                              className="block truncate text-xs italic text-muted"
+                              title="Word supplies this level's number on paste — the app marker/number is suppressed"
+                            >
+                              Word numbers
+                            </span>
+                          ) : table.numbering.mode === "multilevel" ? (
+                            <label className="flex items-center gap-1.5 text-xs text-text-secondary">
+                              <input
+                                type="checkbox"
+                                checked={table.numbering.levels[i] !== false}
+                                onChange={(e) => {
+                                  const next = [...table.numbering.levels];
+                                  next[i] = e.target.checked;
+                                  onChange({
+                                    numbering: {
+                                      ...table.numbering,
+                                      levels: next,
+                                    },
+                                  });
+                                }}
+                                aria-label={`Show the number on level ${i + 1}`}
+                                className="accent-[var(--accent)]"
+                              />
+                              Show number
+                            </label>
+                          ) : (
+                            // Split marker: TYPE (counter/symbol glyph) +
+                            // DELIMITER (glued after a counter; disabled for a
+                            // symbol/none type, which takes no suffix).
+                            (() => {
+                              const spec =
+                                markerSpecs[i] ?? defaultMarkerSpec(i + 1);
+                              const counter = isCounterType(spec.type);
+                              return (
+                                <div className="flex items-center gap-1">
+                                  <select
+                                    value={spec.type}
+                                    onChange={(e) =>
+                                      setMarkerSpec(i, {
+                                        type: e.target.value as MarkerType,
+                                      })
+                                    }
+                                    aria-label={`Marker type for level ${i + 1}`}
+                                    className={`${FIELD} min-w-0 flex-1 px-1`}
+                                  >
+                                    {MARKER_TYPE_OPTIONS.map((o) => (
+                                      <option key={o.value} value={o.value}>
+                                        {o.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <select
+                                    value={spec.delim}
+                                    disabled={!counter}
+                                    onChange={(e) =>
+                                      setMarkerSpec(i, {
+                                        delim: e.target.value as MarkerDelim,
+                                      })
+                                    }
+                                    aria-label={`Marker delimiter for level ${i + 1}`}
+                                    title={
+                                      counter
+                                        ? "Delimiter after the number/letter"
+                                        : "No delimiter — this marker is a symbol"
+                                    }
+                                    className={`${FIELD} w-16 px-1 text-center disabled:opacity-40`}
+                                  >
+                                    {MARKER_DELIM_OPTIONS.map((o) => (
+                                      <option key={o.value} value={o.value}>
+                                        {o.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })()
+                          )}
+                        </div>
+                      )}
+                      {/* Word heading: checkbox + a rank chip-dropdown. Auto = the
+                          contiguous rank (never skipping); picking H1–H9 overrides
+                          it. Amber when a manual pick skips a rank. */}
+                      <div className="flex w-20 shrink-0 items-center justify-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={isHeading}
+                          onChange={(e) => {
+                            const next = [...table.headingLevels];
+                            next[i] = e.target.checked;
+                            onChange({ headingLevels: next });
+                          }}
+                          aria-label={
+                            isHeading
+                              ? `${label} maps to Word Heading ${headingK} — uncheck to make it body text`
+                              : `Map ${label} to a Word heading (Navigation pane, collapsible)`
+                          }
+                          title="Map to a Word heading (Navigation pane, collapsible)"
+                          className="accent-[var(--accent)]"
+                        />
+                        {/* Rendered always but visibility-hidden when unchecked, so
+                            the column doesn't jump when a box is ticked. */}
+                        <select
+                          value={explicit}
+                          onChange={(e) => {
+                            const next = [...(table.headingRanks ?? [])];
+                            next[i] = Number(e.target.value); // 0 = auto
+                            onChange({ headingRanks: next });
+                          }}
+                          aria-label={`Word heading rank for ${label} (Auto = Heading ${auto})`}
+                          title={
+                            skips
+                              ? `Pastes as Word "Heading ${headingK}" — skips a rank (Word flags gapped outlines)`
+                              : `Pastes as Word "Heading ${headingK}". Auto follows the checked levels above; pick H1–H9 to pin it.`
+                          }
+                          className={`h-6 rounded-sm border px-0.5 text-[10px] font-semibold tabular-nums outline-none transition-colors ${
+                            isHeading ? "" : "invisible"
+                          } ${
+                            skips
+                              ? "border-[color:color-mix(in_srgb,var(--warning)_55%,transparent)] bg-[color:color-mix(in_srgb,var(--warning)_12%,transparent)] text-[color:var(--warning)]"
+                              : "border-border-strong bg-accent-subtle text-accent-text hover:border-accent"
+                          }`}
+                        >
+                          <optgroup label="Auto (follows levels above)">
+                            <option value={0}>H{auto}</option>
+                          </optgroup>
+                          <optgroup label="Pin to">
+                            {Array.from({ length: 9 }, (_, n) => (
+                              <option key={n + 1} value={n + 1}>
+                                H{n + 1}
+                              </option>
+                            ))}
+                          </optgroup>
+                        </select>
+                      </div>
+                      {/* Look — the SAME shared LookControl the Section Title uses
+                          (swatch + Aa▾ popover: Font/Size/B/I/U). This restyles the
+                          WHOLE line (label AND value), unlike the Rows list's
+                          Aa/B/I/U, which touch only the label before the colon. */}
+                      <div className="flex w-24 shrink-0 justify-center">
+                        <LookControl
+                          value={lv}
+                          onChange={(patch) => appearance.onLevelChange(idx, patch)}
+                          open={openPop === `lvl-${i}`}
+                          onOpenChange={(o) => setOpenPop(o ? `lvl-${i}` : null)}
+                          label={label}
+                          bodyFontOption={appearance.bodyFont}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

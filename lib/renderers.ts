@@ -62,7 +62,12 @@ function toRoman(n: number): string {
   return s;
 }
 
-/** A per-level marker style the user can pick for each nesting depth. */
+/**
+ * LEGACY fused marker style (type + delimiter in one token). Kept only so old
+ * sessions/exports that stored `markers: MarkerKind[]` can migrate to the split
+ * {type, delim} model (`migrateMarkerKind` in tableModel). New code uses
+ * `MarkerType` + `MarkerDelim`.
+ */
 export type MarkerKind =
   | "decimal" // 1.
   | "paren" // 1)
@@ -74,21 +79,41 @@ export type MarkerKind =
   | "dash" // –
   | "none"; // (no marker)
 
-/** The marker text for a 0-based sibling `index` in the given `kind`. */
-export function markerText(kind: MarkerKind, index: number): string {
-  switch (kind) {
+/** The counter/symbol TYPE for a marker, WITHOUT any trailing delimiter. */
+export type MarkerType =
+  | "decimal" // 1
+  | "upperAlpha" // A
+  | "lowerAlpha" // a
+  | "upperRoman" // I
+  | "lowerRoman" // i
+  | "bullet" // •
+  | "dash" // –
+  | "none"; // (no marker)
+
+/** The delimiter glued AFTER a numeric/alpha counter (ignored for symbols). A
+ *  marker is always followed by a space before the text, so there is no "space"
+ *  delimiter — "none" already yields "1 Apple". */
+export type MarkerDelim =
+  | "dot" // .
+  | "paren" // )
+  | "none"; // (nothing — just the marker-to-text space)
+
+/** A fully-specified marker = counter type + trailing delimiter. */
+export type MarkerSpec = { type: MarkerType; delim: MarkerDelim };
+
+/** The counter/symbol GLYPH for a 0-based sibling `index` (no delimiter). */
+export function markerGlyph(type: MarkerType, index: number): string {
+  switch (type) {
     case "decimal":
-      return `${index + 1}.`;
-    case "paren":
-      return `${index + 1})`;
+      return `${index + 1}`;
     case "upperAlpha":
-      return `${toAlpha(index).toUpperCase()}.`;
+      return toAlpha(index).toUpperCase();
     case "lowerAlpha":
-      return `${toAlpha(index)}.`;
+      return toAlpha(index);
     case "upperRoman":
-      return `${toRoman(index + 1).toUpperCase()}.`;
+      return toRoman(index + 1).toUpperCase();
     case "lowerRoman":
-      return `${toRoman(index + 1)}.`;
+      return toRoman(index + 1);
     case "bullet":
       return "•";
     case "dash":
@@ -98,9 +123,46 @@ export function markerText(kind: MarkerKind, index: number): string {
   }
 }
 
-/** Legacy default marker for a nesting depth: 1. -> a. -> i. -> cycle. */
-export function defaultMarker(depth: number): MarkerKind {
+/** The literal text of a delimiter. */
+export function delimText(delim: MarkerDelim): string {
+  switch (delim) {
+    case "dot":
+      return ".";
+    case "paren":
+      return ")";
+    case "none":
+      return "";
+  }
+}
+
+/** Whether a type is a COUNTER (numbers/letters) that can take a delimiter, as
+ *  opposed to a standalone symbol (bullet/dash) or none. */
+export function isCounterType(type: MarkerType): boolean {
+  return (
+    type === "decimal" ||
+    type === "upperAlpha" ||
+    type === "lowerAlpha" ||
+    type === "upperRoman" ||
+    type === "lowerRoman"
+  );
+}
+
+/** Compose a marker for a 0-based sibling `index`: the glyph, plus the delimiter
+ *  when the type is a counter (a symbol/none takes no delimiter). */
+export function composeMarker(spec: MarkerSpec, index: number): string {
+  const glyph = markerGlyph(spec.type, index);
+  return isCounterType(spec.type) ? `${glyph}${delimText(spec.delim)}` : glyph;
+}
+
+/** Default marker TYPE for a nesting depth: 1 -> a -> i -> cycle (delimiter
+ *  defaults to "dot", matching the old fused "1./a./i." cycle). */
+export function defaultMarkerType(depth: number): MarkerType {
   return (["decimal", "lowerAlpha", "lowerRoman"] as const)[(depth - 1) % 3];
+}
+
+/** The default marker spec for a depth (type cycle + dot delimiter). */
+export function defaultMarkerSpec(depth: number): MarkerSpec {
+  return { type: defaultMarkerType(depth), delim: "dot" };
 }
 
 /**
@@ -276,7 +338,7 @@ function multilevelNumbers(
 export function renderPivotTree(
   nodes: PivotNode[],
   title?: string,
-  markers: MarkerKind[] = [],
+  markers: MarkerSpec[] = [],
   fieldLabels: Record<number, FieldLabel> = {},
   breakAfter: boolean[] = [],
   numbering: NumberingConfig = DEFAULT_NUMBERING,
@@ -319,7 +381,7 @@ export function renderPivotTree(
   const blocks: string[] = [];
   const walk = (list: PivotNode[], level: number, depth: number) => {
     const lvl = Math.min(level, 9);
-    const kind = markers[depth - 1] ?? defaultMarker(depth);
+    const spec = markers[depth - 1] ?? defaultMarkerSpec(depth);
     // Heading rows: this level is mapped to a Word heading (nav + collapsible).
     // Word supplies its number, so the app's number/marker is suppressed on it; the
     // number PATH still computes (via numberOf), so deeper body rows nest correctly.
@@ -329,7 +391,7 @@ export function renderPivotTree(
       // Markers render only in "custom" mode (each level's chosen symbol); a
       // multilevel node shows its precomputed number instead, and "off" shows
       // neither.
-      const m = numbering.mode === "custom" ? markerText(kind, i) : "";
+      const m = numbering.mode === "custom" ? composeMarker(spec, i) : "";
       const num = numberOf?.get(node) ?? "";
       node.lines.forEach((line, j) => {
         const lf = fieldLabels[line.col] ?? DEFAULT_FIELD_LABEL;

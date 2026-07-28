@@ -52,6 +52,16 @@ function parseString(input: string, fs?: string): Grid {
     input,
     fs ? { type: "string", FS: fs } : { type: "string" },
   );
+  return firstSheetToGrid(workbook);
+}
+
+/**
+ * The first sheet of a parsed workbook as a Grid — the ONE place the
+ * `sheet_to_json` options live, so the clipboard path and the file path
+ * (`parseFile`) produce identical grids. Returns [] when the workbook has no
+ * usable sheet.
+ */
+function firstSheetToGrid(workbook: XLSX.WorkBook): Grid {
   const sheetName = workbook.SheetNames[0];
   const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
   if (!sheet) return [];
@@ -66,4 +76,22 @@ function parseString(input: string, fs?: string): Grid {
     defval: "",
     raw: false,
   });
+}
+
+/**
+ * Parse a spreadsheet FILE (dropped or picked) into a Grid, fully client-side —
+ * the same SheetJS already loaded for the clipboard path, just fed raw bytes via
+ * `XLSX.read(arrayBuffer, { type: "array" })`, which auto-detects the format
+ * (.xlsx / .xls / .csv / .tsv / .txt). Reads the FIRST sheet (matching the
+ * clipboard parser, which takes `SheetNames[0]`) so the downstream pipeline is
+ * identical whether a table arrived by paste or by file.
+ *
+ * Async because reading the file's bytes is async; rejects only if the browser
+ * can't read the file. A structurally-empty/garbage file resolves to [] (the
+ * caller shows the same "couldn't read a table" guidance as an empty paste).
+ */
+export async function parseFile(file: File): Promise<Grid> {
+  const buf = await file.arrayBuffer();
+  const workbook = XLSX.read(buf, { type: "array" });
+  return firstSheetToGrid(workbook);
 }

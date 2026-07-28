@@ -17,6 +17,8 @@ export type LevelStyle = {
   font: string; // font-family name
   size: number; // pt
   bold: boolean;
+  italic: boolean;
+  underline: boolean;
 };
 
 /**
@@ -97,6 +99,8 @@ const FALLBACK_LEVEL: LevelStyle = {
   font: "Arial",
   size: 11,
   bold: false,
+  italic: false,
+  underline: false,
 };
 
 // Title default when no `titleStyle` is supplied (matches the old level-1 look).
@@ -163,8 +167,9 @@ const FALLBACK_TITLE: TitleStyle = {
  * like the tag route, never under Keep Source Formatting).
  *
  * Every OTHER body paragraph uses the app's direct per-level look
- * (color/font/size/bold) + indent + compact spacing, emitted as INLINE formatting
- * on each `<p>` (and `<b>`/`<i>`/`<u>` runs for the label) rather than CSS classes. A
+ * (color/font/size/bold/italic/underline) + indent + compact spacing, emitted as
+ * INLINE formatting on each `<p>` (with `<b>`/`<i>`/`<u>` runs for the level look
+ * AND for the label) rather than CSS classes. A
  * "Use Destination Styles" paste discards class/style-name formatting it can't map
  * but KEEPS inline direct formatting + inline runs, so the look, tight spacing,
  * and label bold/italic/underline survive and match the live preview.
@@ -197,10 +202,18 @@ export function buildWordHtml(
       `color:${s.color};font-family:'${s.font}';font-size:${s.size}pt`
     );
   };
-  // Bold is a <b> run (direct character formatting), which a "Use Destination
-  // Styles" paste keeps -- unlike a class-level font-weight, which it discards.
-  const wrapBold = (i: number, content: string) =>
-    lvl(i).bold ? `<b>${content}</b>` : content;
+  // The per-level look's bold/italic/underline as nested <b>/<i>/<u> runs (direct
+  // character formatting, which a "Use Destination Styles" paste keeps -- unlike a
+  // class-level font-weight it would discard). Underline innermost then italic then
+  // bold, matching the title's wrap order and the preview.
+  const wrapLook = (i: number, content: string) => {
+    const s = lvl(i);
+    let h = content;
+    if (s.underline) h = `<u>${h}</u>`;
+    if (s.italic) h = `<i>${h}</i>`;
+    if (s.bold) h = `<b>${h}</b>`;
+    return h;
+  };
 
   // The title's own direct look + bold/italic/underline runs, used for the
   // `ws-title` row when it isn't mapped to a Word heading. Underline innermost,
@@ -323,7 +336,7 @@ export function buildWordHtml(
         }
         const base = directStyle(i, Number(d));
         const style = pageBreak ? `${base};${pageBreak}` : base;
-        return `<p style="${style}">${wrapBold(i, content)}</p>`;
+        return `<p style="${style}">${wrapLook(i, content)}</p>`;
       },
     );
 

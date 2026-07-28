@@ -1,10 +1,23 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import { headingLevel, type HeadingStyle } from "@/lib/clipboard";
 
 /**
  * Read-only display of the ACTIVE section's rendered pivot HTML (from
- * `renderPivotTree`). Each section is its own document now, so this always shows
- * exactly one section — the same fragment `copySection` copies to the clipboard,
- * so preview and export can't diverge.
+ * `renderPivotTree`), presented on a TRUE-TO-SCALE Word page proxy. Each section
+ * is its own document now, so this always shows exactly one section — the same
+ * fragment `copySection` copies to the clipboard, so preview and export can't
+ * diverge.
+ *
+ * The paper is a real US-Letter aspect (8.5 × 11in): a proportional 1in margin
+ * frame (so text wraps in a ~6.5in column, close to how it will flow in Word) with
+ * measured, best-effort pagination — when the content is taller than one page's
+ * usable band we draw a dashed page boundary and count pages. This is an ESTIMATE,
+ * not a guarantee: Word wraps in the destination template's font (usually Calibri),
+ * whose metrics differ from this preview's, so a real page break can land a line or
+ * two off. It answers "does this roughly fit / spill" far better than a blind
+ * paragraph count could, without pretending to be pixel-exact.
  *
  * The HTML is injected via `dangerouslySetInnerHTML`, which is safe here:
  * `renderPivotTree` escapes every user-derived value (titles, field labels), so
@@ -18,14 +31,13 @@ import { headingLevel, type HeadingStyle } from "@/lib/clipboard";
  * keep-source paste will produce. The style values are sanitized in the form
  * (hex color, allow-listed font, clamped sizes).
  */
-// A white "paper" surface (a Word-page proxy) that stays white in BOTH themes,
-// floating on the canvas with a Fluent depth shadow.
-// Generous left padding (pl-14) so the hanging H-tokens sit in a comfortable
-// gutter instead of pressing against the paper's edge — closer to a real Word
-// page margin.
-const previewClasses =
-  "ws-preview rounded-[2px] bg-white p-6 pl-14 text-sm text-[#242424] shadow-[var(--shadow-4)] " +
-  "[&_.ws-title]:mt-1 [&_[data-level]]:mt-1 [&_p]:my-0.5 [&_p]:leading-tight";
+// US-Letter geometry: the paper is 8.5in wide with 1in margins on every side, so
+// each page has a 9in-tall usable content band. Expressed as fractions of the
+// paper WIDTH (the one dimension we know in px), since CSS percentage padding is
+// itself width-relative — 1/8.5 gives a true 1in margin, and 9/8.5 converts the
+// measured content height into "pages".
+const MARGIN_FRAC = 1 / 8.5; // 1in side/top/bottom margin as a fraction of width
+const PAGE_BAND_FRAC = 9 / 8.5; // 9in usable band per page, ditto
 
 export function RenderedPreview({
   html,
@@ -39,6 +51,39 @@ export function RenderedPreview({
   headingStyle: HeadingStyle;
   bodyFont: string;
 }) {
+  // Measure the paper width + rendered content height to draw page boundaries and
+  // count pages. Kept in a layout effect (+ ResizeObserver) so it re-runs on pane
+  // resize and whenever the content changes. Hooks run unconditionally, before the
+  // empty-state early return below.
+  const paperRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<{ pages: number; bandPx: number }>({
+    pages: 1,
+    bandPx: 0,
+  });
+
+  useEffect(() => {
+    const paper = paperRef.current;
+    const content = contentRef.current;
+    if (!paper || !content) return;
+    const measure = () => {
+      const width = paper.clientWidth;
+      const bandPx = width * PAGE_BAND_FRAC;
+      const contentH = content.scrollHeight;
+      const pages = bandPx > 0 ? Math.max(1, Math.ceil(contentH / bandPx)) : 1;
+      setLayout((prev) =>
+        prev.pages === pages && Math.abs(prev.bandPx - bandPx) < 0.5
+          ? prev
+          : { pages, bandPx },
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(paper);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [html, headingStyle, bodyFont]);
+
   if (!html) {
     return (
       <p className="text-sm text-foreground/60">
@@ -51,12 +96,23 @@ export function RenderedPreview({
   // Approximate look from headingStyle.levels (level 1 = the title row; levels
   // 2-9 the nested rows by depth). When a Word style name is mapped the real
   // template look only shows on paste; this preview uses the per-level look.
-  const FALLBACK = { color: "#000000", font: "Arial", size: 11, bold: false };
+  const FALLBACK = {
+    color: "#000000",
+    font: "Arial",
+    size: 11,
+    bold: false,
+    italic: false,
+    underline: false,
+  };
   const step = headingStyle.indentStep ?? 0.2;
   const rule = (sel: string, i: number, indentIn: string) => {
     const lv = headingStyle.levels[i] ?? FALLBACK;
     const margin = indentIn ? `;margin-left:${indentIn}in` : "";
-    return `.ws-preview ${sel}{color:${lv.color};font-family:'${lv.font}';font-size:${lv.size}pt;font-weight:${lv.bold ? 700 : 400}${margin}}`;
+    return (
+      `.ws-preview ${sel}{color:${lv.color};font-family:'${lv.font}';font-size:${lv.size}pt;` +
+      `font-weight:${lv.bold ? 700 : 400};font-style:${lv.italic ? "italic" : "normal"};` +
+      `text-decoration:${lv.underline ? "underline" : "none"}${margin}}`
+    );
   };
   // Title (level 1, no indent); nested rows (per-level look + (n-1)*step indent).
   // App-drawn multilevel numbers are plain text in the fragment, so the preview
@@ -105,7 +161,11 @@ export function RenderedPreview({
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
     ).join("") +
-    `.ws-preview [data-heading]{margin-left:0;font-weight:700;position:relative}` +
+    // Heading-mapped rows are ALWAYS bold + non-italic + non-underline (Word
+    // owns their look on a mapping paste; the emitted heading rule declares only
+    // bold), so neutralize any per-level italic/underline here to keep the
+    // preview matching the paste. Comes AFTER the [data-level] rules to win.
+    `.ws-preview [data-heading]{margin-left:0;font-weight:700;font-style:normal;text-decoration:none;position:relative}` +
     Array.from(
       { length: 9 },
       (_, i) =>
@@ -119,19 +179,80 @@ export function RenderedPreview({
         `.ws-preview .ws-title::before{${hangingTag(headingTag(titleN))}}`
       : "");
 
-  // No explanatory footnotes under the paper — the hash placeholders and the
-  // dashed page-break rule carry their meaning; prose captions were judged
-  // noise (removed by request, twice — don't reintroduce).
+  const fits = layout.pages <= 1;
+  // Measured page-boundary overlays: a dashed rule + "Page N" flag at each usable-
+  // band multiple. Absolutely positioned inside the content box (pointer-events
+  // none) so they never affect the measured height. Best-effort — see the file
+  // header note on why this is an estimate, not a guarantee.
+  const breaks =
+    layout.bandPx > 0 && layout.pages > 1
+      ? Array.from({ length: layout.pages - 1 }, (_, i) => (i + 1) * layout.bandPx)
+      : [];
+
   return (
-    <div>
+    <div className="flex flex-col gap-2">
+      {/* Fit read-out + honest paste-mode label. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-0.5 text-xs">
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-medium ${
+            fits
+              ? "border-[color:color-mix(in_srgb,var(--success)_35%,transparent)] bg-[color:color-mix(in_srgb,var(--success)_12%,transparent)] text-[color:var(--success)]"
+              : "border-[color:color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--warning)_12%,transparent)] text-[color:var(--warning)]"
+          }`}
+          title="Estimated from this preview's layout — Word wraps in the destination font, so the real page break can shift a little."
+        >
+          <span aria-hidden>{fits ? "✓" : "⚠"}</span>
+          {fits ? "Fits 1 page" : `~${layout.pages} pages (estimate)`}
+        </span>
+        <span
+          className="text-muted"
+          title="The preview shows the look a Keep-Source-Formatting paste produces. A Use-Destination-Styles paste instead adopts your Word template's own Heading styles for mapped headings."
+        >
+          Showing: your <strong className="font-semibold">Keep-Source</strong> look
+        </span>
+      </div>
+
       {/* Scoped stylesheet; the `.ws-preview` selectors apply to the paper below. */}
       <style>{css}</style>
+
+      {/* The Word-page proxy: white in both themes, real US-Letter aspect via a
+          proportional 1in margin frame, floating on the canvas with a depth shadow. */}
       <div
-        aria-label="Rendered section preview"
-        className={previewClasses}
-        style={{ fontFamily: bodyFont }}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+        ref={paperRef}
+        aria-label="Rendered section preview on a Word page"
+        className="relative rounded-[2px] bg-white shadow-[var(--shadow-4)]"
+        style={{
+          paddingLeft: `${MARGIN_FRAC * 100}%`,
+          paddingRight: `${MARGIN_FRAC * 100}%`,
+          paddingTop: `${MARGIN_FRAC * 100}%`,
+          paddingBottom: `${MARGIN_FRAC * 100}%`,
+        }}
+      >
+        <div ref={contentRef} className="relative">
+          {/* Measured page boundaries (best-effort). */}
+          {breaks.map((top, i) => (
+            <div
+              key={i}
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 flex items-center"
+              style={{ top }}
+            >
+              <span className="h-px flex-1 border-t border-dashed border-[#c0c0c0]" />
+              <span className="ml-1 rounded-sm bg-[#f0f0f0] px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#888]">
+                Page {i + 2}
+              </span>
+            </div>
+          ))}
+          <div
+            className={
+              "ws-preview text-sm text-[#242424] " +
+              "[&_.ws-title]:mt-1 [&_[data-level]]:mt-1 [&_p]:my-0.5 [&_p]:leading-tight"
+            }
+            style={{ fontFamily: bodyFont }}
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </div>
+      </div>
     </div>
   );
 }

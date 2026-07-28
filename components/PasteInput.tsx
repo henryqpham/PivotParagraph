@@ -8,13 +8,14 @@ import {
   useState,
   type ChangeEvent,
 } from "react";
-import { parseClipboard } from "@/lib/parser";
+import { parseClipboard, parseFile } from "@/lib/parser";
 import {
   buildWordHtml,
   htmlToPlainText,
   headingLevel,
 } from "@/lib/clipboard";
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
+import { smartArrange } from "@/lib/smartArrange";
 import { loadSession, saveSession, clearSession } from "@/lib/persistence";
 import {
   tableToHtml,
@@ -23,6 +24,7 @@ import {
   estimateSectionStats,
   dropEmptyColumns,
   bodyGrid,
+  resolveMarkerSpecs,
   DEFAULT_LEVEL,
   type LevelInput,
   type TableState,
@@ -32,7 +34,8 @@ import { SectionsRail } from "./SectionsRail";
 import { Popover } from "./Popover";
 import { RenderedPreview } from "./RenderedPreview";
 import { GridTable } from "./GridTable";
-import { JsonPreview } from "./JsonPreview";
+import { AddTableModal } from "./AddTableModal";
+import { CommandPalette, type Command } from "./CommandPalette";
 
 const MAX_TABLES = 100;
 
@@ -147,9 +150,26 @@ export function PasteInput() {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
     "idle",
   );
-  const [view, setView] = useState<"rendered" | "table" | "json">("rendered");
+  const [view, setView] = useState<"rendered" | "table">("rendered");
   // Whether the top-band "Document" (global body settings) popover is open.
   const [showDoc, setShowDoc] = useState(false);
+  // The "+ Add table" intake modal (paste / drop a file / example, previewed
+  // before it commits) and the Ctrl+K command palette.
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
+  // A just-ingested paste that Smart Arrange auto-structured — a dismissible
+  // banner offers "Start blank" (undoable either way). Cleared on the next edit.
+  const [smartHint, setSmartHint] = useState<{
+    tableId: string;
+    levels: number;
+  } | null>(null);
+  // Mirrors `showAddModal` into a ref so the window paste listener can bail while
+  // the modal owns paste (both listen on window; preventDefault alone wouldn't stop
+  // the other from double-ingesting).
+  const addModalOpenRef = useRef(false);
+  useEffect(() => {
+    addModalOpenRef.current = showAddModal;
+  }, [showAddModal]);
   // Post-copy confirmation + Word-paste guidance (persists until the next edit).
   const [copyNote, setCopyNote] = useState<CopyNote | null>(null);
   // A just-pasted section whose headers match an arranged section (offer to reuse
@@ -395,6 +415,9 @@ export function PasteInput() {
     // A stale paste-error banner is no longer relevant once the user does anything
     // else, so clear it here too (mirrors how the copy note is cleared on edit).
     setError(null);
+    // The Smart Arrange "auto-arranged / start blank" banner is a one-shot nudge
+    // for the just-pasted table; any subsequent edit dismisses it.
+    setSmartHint(null);
     // NOTE: undo/redo history is NOT touched here — it's driven by the snapshot
     // observer below, so ordinary edits ADD to history rather than clearing it.
   }
@@ -424,7 +447,9 @@ export function PasteInput() {
           ls?.sizeInput ?? DEFAULT_LEVEL.sizeInput,
           parseInt(DEFAULT_LEVEL.sizeInput, 10),
         ),
-        bold: ls?.bold ?? DEFAULT_LEVEL.bold,
+        bold: ls?.bold ?? false,
+        italic: ls?.italic ?? false,
+        underline: ls?.underline ?? false,
       };
     });
     const parsedIndent = parseFloat(indentInput);
@@ -511,9 +536,6 @@ export function PasteInput() {
     // Strip fully-empty spacer/padding columns on the way in so they never clutter
     // the Add-fields pool (automatic, no UI).
     const cleaned = dropEmptyColumns(grid);
-    setTables((prev) => [...prev, newTable(id, cleaned)]);
-    setActiveId(id);
-    setError(null);
     // Same table shape as an already-arranged section (matching effective header
     // names)? Offer to reuse its arrangement instead of rebuilding it by hand.
     const sig = cleaned[0]?.length ? headerSignature(cleaned[0]) : null;
@@ -523,8 +545,29 @@ export function PasteInput() {
             t.pivotLevels.length > 0 && headerSignature(bodyGrid(t)[0]) === sig,
         )
       : undefined;
+    // Precedence: an exact-header REUSE match wins (offer that banner, auto-arrange
+    // nothing). Otherwise let Smart Arrange PROPOSE a nested structure from the
+    // column shapes, so the paste lands already-outlined instead of on a blank
+    // canvas — undoable, with a "Start blank" escape hatch in the banner.
+    let table = newTable(id, cleaned);
+    let arrangedLevels = 0;
+    if (!src) {
+      const proposal = smartArrange(cleaned);
+      if (proposal && proposal.levels.length > 0) {
+        table = { ...table, pivotLevels: proposal.levels };
+        arrangedLevels = proposal.levels.length;
+      }
+    }
+    setTables((prev) => [...prev, table]);
+    setActiveId(id);
+    setError(null);
     setArrangeHint(src ? { targetId: id, sourceId: src.id } : null);
-    setStatus(`Added section ${tables.length + 1}.`);
+    setSmartHint(arrangedLevels > 0 ? { tableId: id, levels: arrangedLevels } : null);
+    setStatus(
+      arrangedLevels > 0
+        ? `Added section ${tables.length + 1} — auto-arranged into ${arrangedLevels} levels.`
+        : `Added section ${tables.length + 1}.`,
+    );
     return true;
   }
 
@@ -569,6 +612,9 @@ export function PasteInput() {
   });
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
+      // The Add-table modal owns paste while it is open (its own window listener +
+      // preview-before-commit), so bail here to avoid a double ingest.
+      if (addModalOpenRef.current) return;
       const el = document.activeElement as HTMLElement | null;
       if (
         el &&
@@ -605,6 +651,24 @@ export function PasteInput() {
       ) {
         e.preventDefault();
         copyShortcutRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Ctrl/Cmd+K toggles the command palette — a global launcher over every action,
+  // and the home that surfaces the app's otherwise-invisible shortcuts.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "k"
+      ) {
+        e.preventDefault();
+        setShowPalette((v) => !v);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -811,7 +875,8 @@ export function PasteInput() {
     commitPending();
     const cfg = structuredClone({
       pivotLevels: src.pivotLevels,
-      markers: src.markers,
+      // Normalize to split specs so a legacy source migrates on reuse.
+      markerSpecs: resolveMarkerSpecs(src),
       fieldLabels: src.fieldLabels,
       sortDirs: src.sortDirs,
       breakAfter: src.breakAfter,
@@ -926,51 +991,6 @@ export function PasteInput() {
   const activeStats = useMemo(
     () => (activeTable ? estimateSectionStats(activeTable, activeHtml) : null),
     [activeTable, activeHtml],
-  );
-
-  // ---- Paste zone (a focusable drop target; the actual paste is handled by the
-  //      document-level listener, so a table drops in whether or not this has
-  //      focus). ------------------------------------------------------------
-  const pasteZone = (big: boolean) => (
-    <div
-      tabIndex={0}
-      role="button"
-      aria-label="Paste area. Copy a cell range from Excel or Google Sheets, then press Control or Command plus V anywhere on the page to add it as a section."
-      aria-keyshortcuts="Control+V"
-      className={`flex cursor-text items-center justify-center rounded-lg border-2 border-dashed border-border-strong bg-surface-alt text-center text-muted outline-none transition-colors focus:border-accent focus:bg-accent-subtle ${
-        big ? "min-h-[9rem] p-8 text-base" : "min-h-[4.5rem] p-4 text-sm"
-      }`}
-    >
-      {atLimit ? (
-        <span>
-          Reached the {MAX_TABLES}-section limit. Remove a section to add another.
-        </span>
-      ) : tables.length === 0 ? (
-        <span>
-          Press{" "}
-          <kbd className="rounded border border-border-strong px-1.5 py-0.5 font-mono text-xs">
-            Ctrl
-          </kbd>{" "}
-          +{" "}
-          <kbd className="rounded border border-border-strong px-1.5 py-0.5 font-mono text-xs">
-            V
-          </kbd>{" "}
-          to paste a table copied from Excel or Google Sheets.
-        </span>
-      ) : (
-        <span>
-          Paste another table to add a section (
-          <kbd className="rounded border border-border-strong px-1 py-0.5 font-mono text-[11px]">
-            Ctrl
-          </kbd>
-          +
-          <kbd className="rounded border border-border-strong px-1 py-0.5 font-mono text-[11px]">
-            V
-          </kbd>
-          , anywhere).
-        </span>
-      )}
-    </div>
   );
 
   const errorBanner = error && (
@@ -1090,18 +1110,145 @@ export function PasteInput() {
     );
   })();
 
+  // Smart Arrange nudge: a just-pasted section landed already-nested. Offer a
+  // one-click "Start blank" (undoable either way); guards for the table still
+  // existing (an undo/removal could have taken it away).
+  const smartBanner = (() => {
+    if (!smartHint || !tables.some((t) => t.id === smartHint.tableId)) return null;
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-3 rounded border border-[color:color-mix(in_srgb,var(--accent)_35%,transparent)] bg-accent-subtle px-4 py-2 text-sm text-foreground"
+      >
+        <span className="min-w-0 flex-1">
+          <strong>Auto-arranged</strong> into {smartHint.levels} indent level
+          {smartHint.levels === 1 ? "" : "s"} from the columns — drag the rows to
+          adjust, or start over.
+        </span>
+        <button
+          type="button"
+          onClick={startBlankFromHint}
+          className="h-7 shrink-0 rounded border border-accent px-2.5 text-sm font-semibold text-accent-text transition-colors hover:bg-accent hover:text-accent-fg"
+        >
+          Start blank
+        </button>
+        <button
+          type="button"
+          onClick={() => setSmartHint(null)}
+          aria-label="Dismiss auto-arrange notice"
+          className="shrink-0 leading-none text-muted transition-colors hover:text-foreground"
+        >
+          &times;
+        </button>
+      </div>
+    );
+  })();
+
   const notifications =
-    errorBanner || copyBanner || arrangeBanner ? (
+    errorBanner || copyBanner || arrangeBanner || smartBanner ? (
       <div className="flex flex-col gap-2 px-4 pt-3">
         {errorBanner}
         {copyBanner}
         {arrangeBanner}
+        {smartBanner}
       </div>
     ) : null;
 
   // Read the mirrored availability state (kept in sync by syncUndoAvail at every
   // history mutation) — NOT the ref, which can't be read during render.
   const { canUndo, canRedo } = undoAvail;
+
+  // Discard a Smart Arrange proposal and start the just-pasted section blank.
+  function startBlankFromHint() {
+    if (!smartHint) return;
+    patchTable(smartHint.tableId, { pivotLevels: [] });
+    setSmartHint(null);
+  }
+
+  // The Ctrl+K command palette's vocabulary — every top-level action plus a
+  // "Go to section" entry per table. Routes through the existing handlers, so all
+  // of it inherits undo/redo and the confirmations. Disabled entries stay visible
+  // (the launcher's menu is stable) but unselectable.
+  const commands: Command[] = [
+    {
+      id: "add",
+      label: "Add a table…",
+      section: "Add",
+      keywords: "paste import file upload new section",
+      run: () => setShowAddModal(true),
+    },
+    {
+      id: "example",
+      label: "Load an example section",
+      section: "Add",
+      keywords: "demo sample try",
+      run: addExample,
+    },
+    {
+      id: "copy",
+      label: "Copy section to clipboard",
+      section: "This section",
+      shortcut: "Ctrl+Enter",
+      keywords: "export word clipboard",
+      disabled: !activeTable,
+      run: () => void copySection(),
+    },
+    {
+      id: "dup",
+      label: "Duplicate this section",
+      section: "This section",
+      keywords: "clone",
+      disabled: !activeTable,
+      run: () => activeTable && duplicateTable(activeTable.id),
+    },
+    {
+      id: "remove",
+      label: "Remove this section",
+      section: "This section",
+      keywords: "delete",
+      disabled: !activeTable,
+      run: () => activeTable && removeTable(activeTable.id),
+    },
+    {
+      id: "undo",
+      label: "Undo",
+      section: "Edit",
+      shortcut: "Ctrl+Z",
+      disabled: !canUndo,
+      run: doUndo,
+    },
+    {
+      id: "redo",
+      label: "Redo",
+      section: "Edit",
+      shortcut: "Ctrl+Y",
+      disabled: !canRedo,
+      run: doRedo,
+    },
+    {
+      id: "doc",
+      label: "Document settings",
+      section: "Edit",
+      keywords: "font spacing indent body separator backup export import",
+      run: () => setShowDoc(true),
+    },
+    {
+      id: "clear",
+      label: "Clear all sections",
+      section: "Edit",
+      keywords: "delete reset",
+      disabled: tables.length === 0,
+      run: () => setConfirmClear(true),
+    },
+    ...tables.map((t, i) => ({
+      id: `go-${t.id}`,
+      label: `Go to ${t.sectionTitle.trim() || `Section ${i + 1}`}`,
+      section: "Go to section",
+      keywords: "switch select navigate",
+      run: () => setActiveId(t.id),
+    })),
+  ];
 
   // ---- The Fluent 4-pane IDE (shown ALWAYS — even with no tables yet, so the
   //      full layout/outline is visible; the center shows the onboarding until
@@ -1153,6 +1300,29 @@ export function PasteInput() {
             </button>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            {/* ＋ Add table — the primary intake: opens the paste/drop/example
+                modal that previews before committing. Paste-anywhere still works. */}
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              title="Add a table — paste, drop a file, or an example (previewed first)"
+              className={BTN_SUBTLE}
+            >
+              <span aria-hidden className="text-base leading-none">
+                &#65291;
+              </span>{" "}
+              Add table
+            </button>
+            {/* ⌕ Commands — the Ctrl+K launcher, surfaced so it's discoverable. */}
+            <button
+              type="button"
+              onClick={() => setShowPalette(true)}
+              aria-label="Open the command palette"
+              title="Commands (Ctrl+K)"
+              className={`${BTN_SUBTLE} !px-2`}
+            >
+              <span aria-hidden>&#8981;</span>
+            </button>
             {/* ⚙ Document — GLOBAL body settings (all tables): body font, indent per
                 nesting level, and reset-levels. Owned here (PasteInput holds the
                 state), opened from a shared Popover. */}
@@ -1371,21 +1541,49 @@ export function PasteInput() {
                   ))}
                 </ol>
               </div>
-              {pasteZone(true)}
-              <div className="flex items-center justify-center gap-2 text-sm text-muted">
-                <span>No spreadsheet handy?</span>
-                <button
-                  type="button"
-                  onClick={addExample}
-                  className="rounded border border-border-strong bg-surface px-3 py-1.5 text-sm font-semibold text-accent-text transition-colors hover:border-accent hover:bg-accent-subtle"
+              <button
+                type="button"
+                onClick={() => setShowAddModal(true)}
+                className="flex min-h-[9rem] flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-border-strong bg-surface-alt p-8 text-center transition-colors hover:border-accent hover:bg-accent-subtle"
+              >
+                <span
+                  aria-hidden
+                  className="text-2xl leading-none text-accent-text"
                 >
-                  Try an example
-                </button>
+                  &#65291;
+                </span>
+                <span className="text-base font-semibold text-accent-text">
+                  Add a table
+                </span>
+                <span className="text-xs text-muted">
+                  Paste, drop an .xlsx / .csv, or try an example
+                </span>
+              </button>
+              <div className="flex items-center justify-center gap-2 text-xs text-muted">
+                <span>or press</span>
+                <kbd className="rounded border border-border-strong px-1.5 py-0.5 font-mono text-[11px]">
+                  Ctrl
+                </kbd>
+                <span>+</span>
+                <kbd className="rounded border border-border-strong px-1.5 py-0.5 font-mono text-[11px]">
+                  V
+                </kbd>
+                <span>to paste from anywhere</span>
               </div>
             </div>
           ) : (
             <>
-              {pasteZone(false)}
+              <button
+                type="button"
+                onClick={() => setShowAddModal(true)}
+                title="Add another table (paste, drop a file, or an example)"
+                className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border-strong bg-surface-alt px-4 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:border-accent hover:bg-accent-subtle hover:text-accent-text"
+              >
+                <span aria-hidden className="text-base leading-none">
+                  &#65291;
+                </span>
+                Add another table
+              </button>
               {activeTable && (
                 <TableCard
                   key={activeTable.id}
@@ -1414,7 +1612,6 @@ export function PasteInput() {
                 [
                   { key: "rendered", label: "Preview" },
                   { key: "table", label: "Table" },
-                  { key: "json", label: "JSON" },
                 ] as const
               ).map((t) => (
                 <button
@@ -1455,15 +1652,7 @@ export function PasteInput() {
             )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            {view === "json" ? (
-              activeTable ? (
-                <JsonPreview grid={activeTable.grid} />
-              ) : (
-                <p className="text-sm text-foreground/60">
-                  Paste a table to inspect its raw data here.
-                </p>
-              )
-            ) : view === "table" ? (
+            {view === "table" ? (
               activeTable ? (
                 <GridTable
                   grid={activeTable.grid}
@@ -1485,6 +1674,30 @@ export function PasteInput() {
           </div>
         </section>
       </div>
+
+      {/* ＋ Add-table intake modal (paste / drop a file / example, previewed
+          before commit) and the Ctrl+K command palette — both portal to <body>. */}
+      <AddTableModal
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onCommit={(grid) => {
+          ingestGrid(grid);
+        }}
+        parseClipboardData={parseClipboard}
+        parseFile={parseFile}
+        onUseExample={() => {
+          addExample();
+          setShowAddModal(false);
+        }}
+        atLimit={atLimit}
+        limitMessage={`Reached the ${MAX_TABLES}-section limit. Remove a section to add another.`}
+      />
+      <CommandPalette
+        open={showPalette}
+        onClose={() => setShowPalette(false)}
+        commands={commands}
+        placeholder="Search commands…"
+      />
     </div>
   );
 }

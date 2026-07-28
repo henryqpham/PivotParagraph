@@ -1,77 +1,127 @@
-# Excel &rarr; Word Pivot
+# PivotParagraph
 
-Convert pasted Excel data into a **Word-ready nested outline**. Paste one or more tables copied from Excel or Google Sheets; the app restructures each into an Excel-pivot-style hierarchy and copies it to the clipboard so it pastes into Microsoft Word.
+Turn a wide Excel table into a **Word-ready nested outline**. Paste one or more tables copied from Excel or Google Sheets; each is restructured into an Excel-pivot-style hierarchy and copied to the clipboard so it pastes straight into Microsoft Word.
 
 ## Why
 
-Wide Excel tables don't fit an 8.5" x 11" Word page — columns bleed off the edge and the table becomes unreadable. Rather than shrink or split the grid, this app turns one wide table into a narrow, nested outline: you arrange fields into ordered **indent levels** (each level can stack several fields at the same indentation) and rows nest and merge by those levels, so it flows down the page.
+Wide Excel tables don't fit an 8.5" × 11" Word page — columns bleed off the edge and the table becomes unreadable. Rather than shrink or split the grid, this app turns one wide table into a narrow, nested outline: you arrange fields into ordered **indent levels** (each level can stack several fields at the same indentation) and rows nest and merge by those levels, so the data flows *down* the page instead of off the side.
 
-## Status
+```
+Region, Country, Product, Units, Revenue   ─────▶   1. Region: Americas
+(5 columns bleeding off the page)                       a. Country: United States
+                                                            i. Product: Laptops
+                                                               Units: 120
+```
 
-**Working end to end:** add a table → parse (SheetJS) → nest → render → live preview → **Copy section**. Add tables through a focused **＋ Add table** modal — **paste**, **drop / browse an `.xlsx` / `.xls` / `.csv` / `.tsv` file**, or **Try an example** — that previews what it read ("✓ Read N rows × M columns" + a mini-table) before it commits; a copied table also still drops in on **Ctrl/Cmd + V from anywhere**. A fresh paste is **auto-arranged** into a sensible nested outline (Smart Arrange) so it lands already-structured, with a one-click **Start blank** escape hatch. Manage several tables in a left Sections rail (**reorderable by drag-and-drop**), configure each table's pivot on a merged **Rows** canvas (drag fields to nest them), preview the active section on a **true-to-scale Word page** (with a Fits-1-page / ~N-pages estimate), and copy it as its own standalone Word document — with an inline confirmation that reminds you which Word paste option to choose. A **Ctrl/Cmd + K command palette** launches every action. Your whole workspace **auto-saves in the browser** (local `localStorage`, nothing uploaded), so a refresh won't lose it, and **Remove section / Clear all are undoable**. See the [roadmap](./docs/ROADMAP.md) for what's out of scope (`.docx`).
-
-## The pivot view
-
-Add fields from the **Add fields** pool, then shape the **Rows** canvas — one row per field, drawn with Windows-Explorer-style **tree connector lines** (│ ├ └) to show the nesting. **Drag** a field by its ⋮ handle (or drag an Add-fields chip) **onto a row** to stack it into that level, or **into a gap** to make a new indent level; the handle's arrow keys are the keyboard twin (↑/↓ reorder, ◄/► outdent/indent), and ◄ ► ✕ buttons stay on every row. Depth is capped at **9 levels** — the most Word shows — with a live N/9 chip; a field added or dropped past the cap stacks into the deepest level. Stack several fields at one level to show them together at the same indent. Rows nest by the levels and **merge** when their values match across a level's fields. Each line reads `Field name: value` — per field, toggle the `Field name:` label off (just the value), or **bold**/**italic**/**underline** it (`Aa`/`B`/`I`/`U`; underline covers just the name) to make a long list scannable, and **sort** the groups at that field (↕ off / ↑ ascending / ↓ descending; numeric *and* text aware, so `2` sorts before `10`). Each field name renders as a **live micro-preview in its level's real look**, with a faint sample value from the first data row. Each level's own controls live on its **first field** (the level owner) — a stacked sibling shows just its field controls plus a muted "shares level N" note — and are: a Marker/Number cell (in **Custom** mode, a **Type** select — `1`/`a`/`A`/`i`/`I`/`•`/`–`/None — paired with an **After** delimiter select — `.`/`)`/space/none, disabled for symbol types; or a **Show number** checkbox in **Multilevel** mode, hidden in **Off** mode), a **Word heading** checkbox, and a **Look** cell — a color swatch plus an **Aa▾** popover with font / size / **B** / **I** / **U**, the *same* control the Section title uses — that sets that depth's shared body-row look. Two checkboxes beside the Markers control shape the page: **Blank line between top-level groups** adds a blank line after each top-level group, and **New page per group** starts each top-level group (after the first) on a new Word page (a `page-break-before` that carries into the paste; the preview shows a dashed rule at each break). A per-table **Markers** control (a 3-mode dropdown: **Off (none)** = no markers or numbers / **Custom (per level)** = each level's chosen symbol / **Multilevel numbers**; default Custom) picks the body's marker style; Multilevel draws static **multilevel numbers** from a chosen **Start** — the exact first number (e.g. `5.1` → `5.1`, `5.1.1`, `5.1.1.1`), so set it to `5.1` to nest a body under a `5.0` section title — as plain body text, not Word auto-numbering, so nothing becomes a Word heading and the preview shows the real numbers; when on, the number replaces that level's marker, and the owner row's **Show number** checkbox hides a level's number. Hidden levels are *transparent*: the numbers follow the gap (e.g. number the type + text but hide the title → `5.1` then `5.1.1`, `5.1.2`, never a number under a missing parent). The owner row's **Word heading** checkbox maps a level's rows to a real Word heading (so they show in the Navigation pane and collapse, flush-left) — handy on just the top level so each section is in the document outline; a small **rank chip-dropdown** beside the checkbox shows exactly which Heading the level pastes as — **Auto** keeps checked levels contiguous (no skipped ranks, shifting under a mapped Section title), or pin **H1–H9** when a template's numbering needs specific ranks (even several levels at the same one) — and since Word numbers those rows, the level's Marker/Number cell shows a *Word numbers* note instead of a dead control. An optional **Section title** lives in its own **Section Title** group — a **Word heading** dropdown (None / Heading 1–4 / **Custom style…**, the latter a text box for any style name in your destination template, e.g. `TBL_TITLE`) plus its own look (font / size / **B** / **I** / **U** / color); pick a Heading (1–4, each mapped at its correct outline level) and the title maps to that Word heading: a *Use Destination Styles* (or default Ctrl+V) paste gives it the **document's own heading look** + auto-number + Navigation-pane entry, while a *Keep Source Formatting* paste keeps **exactly the preview look** you styled (font, size, color, **B**/**I**/**U**). A **Table** tab beside the live preview shows the raw pasted grid as an actual table (exactly what came from Excel, before the outline), and a **JSON** tab inspects the same grid as raw JSON. Fully blank spacer columns are dropped automatically on paste, so they never clutter the field pool.
-
-## Multiple tables
-
-Paste table after table — each becomes a row in the left **Sections rail** (one edited at a time, cap 100), inside a 4-pane IDE layout: top global controls · left rail · center builder · pinned right live preview. Reorder sections by **dragging** them in the rail (a grip ⋮ + keyboard ↑/↓ as the accessible path), and **duplicate** one with the **⧉** button (a deep clone right after the original) when you have several near-identical tables — each section is its own standalone Word document, not a stacked section; the Preview tab always shows the section you're editing. Paste a table whose **headers match an already-arranged section** and a banner offers to **reuse that section's arrangement** (levels, markers, headings, labels, sort) in one click — undoable, like everything else, and taking precedence over Smart Arrange's auto-outline. The shared body styling is reached right in the Rows canvas's **Look** control on each level's first field (a color swatch + an **Aa▾** popover with font / size / **B** / **I** / **U** per depth — the identical control the Section title uses), with the document-wide **Body font**, **Line spacing**, **Label separator** (how `Field name` joins its value: `: `, ` — `, …), **Indent/level**, and **Reset levels** in a compact **⚙ Document** popover in the top command band — all badged *All tables* so they apply to every section; each table keeps its own fields and title. Export the active section with **Copy section**, then follow the inline paste-guidance banner in Word. The whole workspace is saved in your browser (locally, nothing uploaded), so closing the tab or refreshing won't lose it.
-
-## Stack
-
-- Next.js 16 (App Router) + TypeScript
-- SheetJS (`xlsx`, official CDN tarball) for parsing
-- Tailwind CSS v4 — Microsoft **Fluent/Office** reskin (Teams-blue accent, Segoe UI)
-- Client-side only — no backend, no database, nothing uploaded. Your workspace is saved to the browser's local storage (on your machine only) so it survives a refresh.
-
-## Getting started
+## Quick start
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), click **＋ Add table** (or just press **Ctrl/Cmd + V** anywhere) with a cell range copied from Excel or Google Sheets — or drop an `.xlsx` / `.csv` file into the Add-table modal. A fresh paste is auto-arranged into a starting outline; drag the Rows to refine it. Click **Copy section** (or press **Ctrl/Cmd + Enter** from anywhere) and paste into a Word document (*Use Destination Styles* — or a plain default Ctrl+V — maps the title and any heading-marked levels to your document's Heading styles; *Keep Source Formatting* keeps the preview look instead, and *Merge Formatting* strips the heading mapping).
+Open <http://localhost:3000>, click **＋ Add table** (or just press **Ctrl/Cmd + V** anywhere with a cell range copied from Excel) — or drop an `.xlsx` / `.csv` file into the modal. A fresh paste is auto-arranged into a starting outline; refine it with the ◄ ► ▲ ▼ buttons. Then **Copy section** (or **Ctrl/Cmd + Enter**) and paste into Word.
 
-## Run with Docker
+## Share it as one file — no hosting
 
-The app ships a `Dockerfile` (Next.js standalone build, ~305 MB image) and a `docker-compose.yml`. With [Docker](https://www.docker.com/products/docker-desktop/) installed:
+Because the app is 100% client-side, it also builds to a **single self-contained `.html`**:
 
 ```bash
-docker compose up --build
+npm run build:single      # → dist-single/index.html (~660 KB)
 ```
 
-Then open [http://localhost:3000](http://localhost:3000). Press **Ctrl/Cmd + C** in the terminal (or `docker compose down`) to stop. Everything runs client-side in your browser — nothing is uploaded (the workspace is saved only in your browser's local storage).
+That one file contains everything (React, SheetJS, styles, app code) with **zero external requests**. Double-click it and it runs — no server, no install. Put it on a shared network drive and your whole team can use it; update it by replacing that one file.
+
+> Open it in Chrome or Edge, and verify **Copy section → paste into Word** once on a colleague's machine — a managed browser policy can restrict clipboard access. Copy falls back to a legacy clipboard path automatically if the modern API is refused.
+
+## The builder
+
+Three cards, split by **scope** — that split is the point, so it's always clear what a control will change:
+
+### 1. Section Title
+The title text, a **Word heading** dropdown (None / Heading 1–4 / **Custom style…** for any style name in your template, e.g. `TBL_TITLE`), and its **Look** (font / size / color / **B** / **I** / **U**).
+
+### 2. Rows — *per field*
+Add fields from the pool, then shape one row per field, drawn with Explorer-style tree lines (│ ├ └). Arrange with **◄** outdent · **►** indent · **▲ ▼** reorder · **✕** remove. The row you just changed **briefly highlights** so you don't lose it mid-move.
+
+Each field name renders as a **live micro-preview in its level's real look**, with a faint sample value from the first data row. Per field: toggle the `Field name:` label off, **bold**/*italic*/underline it (`Aa` `B` `I` `U` — these affect **only** the label, the text before the colon), and **sort** that field's groups (↕ / ↑ / ↓ — numeric *and* text aware, so `2` sorts before `10`).
+
+Depth is capped at **9 levels** (the most Word shows) with a live N/9 chip; a field added past the cap stacks into the deepest level. Fields stacked at one level show together at the same indent and merge when their values match — a stacked sibling shows a muted *"shares level N"* note.
+
+### 3. Level formatting — *per level*
+The **Markers** mode (Off / Custom / Multilevel + a **Start** number) plus **Blank line between top-level groups** and **New page per group**, then one compact row per indent level:
+
+| Column | Scope | What it does |
+| ------ | ----- | ------------ |
+| **Marker** | this section | Type (`1` `a` `A` `i` `I` `•` `–` None) × delimiter (`.` `)` None) |
+| **Heading** | this section | Map the level to a real Word heading + an Auto/H1–H9 rank chip |
+| **Look** | **all sections** | Color swatch + **Aa▾** popover (font / size / **B** / **I** / **U**) |
+
+**Look is shared by depth across every section** — restyling level 2 restyles level 2 everywhere (it's badged accordingly). A level's Look restyles the **whole line**; the Rows card's `B`/`I`/`U` touch only the label. In *Multilevel* mode the Marker cell becomes a **Show number** toggle, and on a heading-mapped level it reads *"Word numbers"* since Word supplies that number itself.
+
+## Preview & copy
+
+The pinned right pane shows the active section on a **true-to-scale US-Letter page** — a proportional 1in margin frame with measured pagination, a green **Fits 1 page** / amber **~N pages** chip, and an honest *"Showing: your Keep-Source look"* label. Page counts are a best-effort **estimate**: Word wraps in your template's font, so a real break can shift a line. A **Table** tab shows the raw pasted grid as it came from Excel.
+
+**Copy section** writes the active section to the clipboard as its own standalone Word document, then an inline banner reminds you which paste option to pick — *Use Destination Styles* (adopt your document's Heading styles) vs *Keep Source Formatting* (keep the preview look). Avoid *Merge Formatting*: it strips the heading mapping.
+
+## Multiple sections
+
+Each pasted table is a row in the left **Sections rail** — **its own standalone Word document**, not a stacked section. Drag to reorder (or grip ⋮ + ↑/↓), **⧉** to duplicate, ✕ to remove; cap 100.
+
+Paste a table whose **headers match an already-arranged section** and a banner offers to reuse that arrangement in one click — the recurring-report workflow (same shape, new month's data). That takes precedence over Smart Arrange's auto-outline.
+
+Document-wide settings — **Body font**, **Line spacing**, **Label separator**, **Indent/level**, **Reset levels**, and workspace **Export / Import** — live in the **⚙ Document** popover.
+
+Everything is **undoable** (Ctrl+Z / Ctrl+Y), and the whole workspace **auto-saves to your browser** (local only, nothing uploaded). **Ctrl/Cmd + K** opens a command palette over every action.
+
+## Stack
+
+- **Next.js 16** (App Router) + **React 19** + **TypeScript**
+- **SheetJS** (`xlsx`, official CDN tarball) for parsing
+- **Tailwind CSS v4** — Microsoft **Fluent/Office** reskin (Teams-blurple accent, Segoe UI)
+- **Vite** + `vite-plugin-singlefile` for the single-file build (build-time only)
+- **Client-side only** — no backend, no API routes, no database. Nothing is uploaded.
 
 ## Docs
 
 - [docs/OVERVIEW.md](./docs/OVERVIEW.md) — problem, goals, stack, status
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — data model, pivot, pipeline diagram
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — data model, pivot, pipeline
 - [docs/ROADMAP.md](./docs/ROADMAP.md) — build order & status
 
 ## Project layout
 
 ```
-app/                 App Router pages (home renders the full-height app shell)
+app/                   App Router shell (layout + page); globals.css design tokens
+index.html             entry for the SINGLE-FILE build only (Next ignores it)
+main.tsx               Vite entry: mounts the same PasteInput + globals.css
+vite.config.ts         single-file build (IIFE + inlined assets, file://-safe)
 components/
-  PasteInput.tsx     app shell (4-pane IDE): ingestGrid (dropEmptyColumns + arrangement-reuse vs Smart Arrange precedence) + paste-anywhere, ＋ Add-table modal + Ctrl+K command palette, tables[] + shared styles, localStorage persistence, full undo/redo (Ctrl+Z/Y), duplicate section, Copy-section confirmation, pinned preview (Preview/Table/JSON tabs + rows/levels/~pages stat) + Copy section
-  SectionsRail.tsx   left Sections rail: select / drag-reorder (grip ⋮ + keyboard ↑/↓) / duplicate (⧉) / remove per section
-  AddTableModal.tsx  ＋ Add-table intake modal: paste / drop / Browse a file / Try an example → preview ("Read N×M" + mini-table) → Add section; onCommit(grid) → PasteInput.ingestGrid
-  CommandPalette.tsx Ctrl/Cmd+K fuzzy launcher (subsequence match, grouped, keyboard nav, kbd-chip shortcuts) over PasteInput's handlers; portals to <body>
-  TableCard.tsx      one table's center builder: Section Title group (title + Word-heading dropdown + title look) + Levels group (merged Rows canvas — one row per field, ⋮-handle drag-and-drop via placeColumn, per-level controls on the level owner, N/9-levels cap + blank-line/new-page-per-group toggles)
-  tableModel.ts      TableState + tableToHtml (per-table nest->render) + bucket helpers (add/remove/indent/outdent/move/placeColumn/unusedColumns) + MAX_LEVELS=9 depth cap + dropEmptyColumns/bodyGrid (ingest cleanup + header-row offset) + estimateSectionStats + newTable factory + makeExampleTable/EXAMPLE_GRID
-  RenderedPreview.tsx renders the pivot HTML on a true-to-scale US-Letter paper proxy (proportional 1in margins) with measured, best-effort pagination (ResizeObserver -> dashed "Page N" boundaries + Fits/~N-pages chip); ws-title + [data-level] CSS, 9 level rules; dashed [data-break] page-break rule
-  GridTable.tsx      Table view: the raw pasted grid as an HTML table (as-is, before the outline)
-  JsonPreview.tsx    shows the raw parsed Grid as JSON
-  Popover.tsx        shared dependency-free popover (Document + Look popovers)
+  PasteInput.tsx       app shell (4-pane IDE): ingestGrid (dropEmptyColumns +
+                       arrangement-reuse vs Smart Arrange precedence) + paste-anywhere,
+                       ＋ Add-table modal, Ctrl+K palette, tables[] + shared styles,
+                       localStorage persistence, undo/redo, Copy section
+  SectionsRail.tsx     left rail: select / drag-reorder / duplicate (⧉) / remove
+  AddTableModal.tsx    intake modal: paste / drop / Browse / example → preview
+                       ("Read N×M" + full scrollable table) → Add section
+  CommandPalette.tsx   Ctrl/Cmd+K fuzzy launcher; portals to <body>
+  TableCard.tsx        the three builder cards: Section Title · Rows (per field) ·
+                       Level formatting (per level)
+  tableModel.ts        TableState + tableToHtml + bucket helpers (add/remove/
+                       indent/outdent/move) + MAX_LEVELS=9 + dropEmptyColumns/
+                       bodyGrid + estimateSectionStats + newTable/makeExampleTable
+  RenderedPreview.tsx  true-to-scale US-Letter proxy: 1in margins, measured
+                       pagination (ResizeObserver → "Page N" rules + fit chip)
+  GridTable.tsx        Table view: the raw pasted grid, as-is
+  Popover.tsx          shared dependency-free popover (Document + Look)
 lib/
-  persistence.ts     versioned localStorage save/load/clear for the workspace (local-only)
-  types.ts           PivotNode/PivotLine + FieldLabel + raw Grid
-  parser.ts          SheetJS clipboard -> Grid (parseClipboard) and file -> Grid (parseFile: XLSX.read arrayBuffer); shared firstSheetToGrid helper
-  smartArrange.ts    pure heuristic: profile columns (cardinality + numeric detection) -> propose nested pivotLevels (group/measure/detail); null when nothing to propose
-  mapper.ts          rowsToPivotTree (Grid + indent buckets + sortDirs -> PivotNode[]; sort post-pass) + cellToString
-  renderers.ts       renderPivotTree (tree -> HTML fragment; labels + markers + breakAfter spacers + static multilevel numbering + page-break marks) + marker/numbering helpers
-  clipboard.ts       Word-friendly clipboard wrapper (buildWordHtml / htmlToPlainText; HeadingStyle / LevelStyle)
-docs/                OVERVIEW, ARCHITECTURE, ROADMAP
+  types.ts             PivotNode/PivotLine + FieldLabel + raw Grid
+  parser.ts            clipboard → Grid (parseClipboard) and file → Grid (parseFile);
+                       shared firstSheetToGrid
+  smartArrange.ts      pure heuristic: profile columns → propose pivotLevels
+  mapper.ts            rowsToPivotTree (buckets → PivotNode[], sort post-pass)
+  renderers.ts         renderPivotTree (tree → HTML fragment)
+  clipboard.ts         buildWordHtml / htmlToPlainText / writeRichClipboard
+  persistence.ts       versioned localStorage save/load/clear
+docs/                  OVERVIEW, ARCHITECTURE, ROADMAP
 ```

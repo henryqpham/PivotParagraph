@@ -13,6 +13,7 @@ import {
   buildWordHtml,
   htmlToPlainText,
   headingLevel,
+  writeRichClipboard,
 } from "@/lib/clipboard";
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
 import { smartArrange } from "@/lib/smartArrange";
@@ -775,7 +776,7 @@ export function PasteInput() {
   //      "what if I clear my browser data". ----------------------------------
   function exportWorkspace() {
     const payload = {
-      app: "excel-word-sections",
+      app: "pivotparagraph",
       version: 1,
       exportedAt: new Date().toISOString(),
       data: snapshot,
@@ -786,7 +787,7 @@ export function PasteInput() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `excel-word-workspace-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `pivotparagraph-workspace-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
     setShowDoc(false);
@@ -941,38 +942,32 @@ export function PasteInput() {
       setCopyNote({ status: "empty" });
       return;
     }
-    if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
+    // `writeRichClipboard` tries the async Clipboard API and falls back to the
+    // legacy execCommand route, so Copy still works where the modern API is
+    // refused — notably the single-file build opened straight from disk
+    // (origin `null`, not a secure context).
+    const ok = await writeRichClipboard(
+      buildWordHtml(html, headingStyle, bodyFont),
+      htmlToPlainText(html),
+    );
+    if (!ok) {
       setCopyNote({ status: "error" });
       flashCopyState("error");
       return;
     }
-    try {
-      const item = new ClipboardItem({
-        "text/html": new Blob([buildWordHtml(html, headingStyle, bodyFont)], {
-          type: "text/html",
-        }),
-        "text/plain": new Blob([htmlToPlainText(html)], {
-          type: "text/plain",
-        }),
-      });
-      await navigator.clipboard.write([item]);
-      // Only claim a Word-heading mapping when one is ACTUALLY emitted: the title
-      // maps to a heading only if a Heading style is chosen AND the title has text
-      // (a blank title renders no `ws-title`), and a body level maps only if it's
-      // both marked AND actually exists in the structure. Otherwise the "Use
-      // Destination Styles" guidance would be misleading (the dropdown defaults to
-      // "Heading 1", so a naive check is almost always true).
-      const titleIsHeading =
-        headingStyleName !== "" && activeTable.sectionTitle.trim() !== "";
-      const bodyHasHeading = (activeTable.headingLevels ?? []).some(
-        (h, i) => h && i < activeTable.pivotLevels.length,
-      );
-      setCopyNote({ status: "ok", hasHeading: titleIsHeading || bodyHasHeading });
-      flashCopyState("copied");
-    } catch {
-      setCopyNote({ status: "error" });
-      flashCopyState("error");
-    }
+    // Only claim a Word-heading mapping when one is ACTUALLY emitted: the title
+    // maps to a heading only if a Heading style is chosen AND the title has text
+    // (a blank title renders no `ws-title`), and a body level maps only if it's
+    // both marked AND actually exists in the structure. Otherwise the "Use
+    // Destination Styles" guidance would be misleading (the dropdown defaults to
+    // "Heading 1", so a naive check is almost always true).
+    const titleIsHeading =
+      headingStyleName !== "" && activeTable.sectionTitle.trim() !== "";
+    const bodyHasHeading = (activeTable.headingLevels ?? []).some(
+      (h, i) => h && i < activeTable.pivotLevels.length,
+    );
+    setCopyNote({ status: "ok", hasHeading: titleIsHeading || bodyHasHeading });
+    flashCopyState("copied");
   }
 
   const atLimit = tables.length >= MAX_TABLES;
@@ -1260,9 +1255,9 @@ export function PasteInput() {
         <div className="flex flex-wrap items-center gap-2 px-2 py-1.5">
           <span className="ml-1 flex items-center gap-2 font-semibold">
             <span className="grid h-5 w-5 place-items-center rounded-[3px] bg-accent text-xs font-bold text-accent-fg">
-              W
+              P
             </span>
-            <h1 className="text-sm">Excel &rarr; Word</h1>
+            <h1 className="text-sm">PivotParagraph</h1>
           </span>
           {/* Plain count, not pagination; surface the 100-section cap only when
               it's actually close enough to matter. */}

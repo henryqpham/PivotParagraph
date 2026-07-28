@@ -9,7 +9,13 @@
 // The stored envelope is versioned: a bump silently invalidates old data instead
 // of hydrating a stale/incompatible shape into React state.
 
-const KEY = "excel-word-sections:session";
+const KEY = "pivotparagraph:session";
+/**
+ * The pre-rename storage key. Read (once, on load) so an existing workspace
+ * survives the rename instead of silently vanishing; never written to again, and
+ * cleared alongside the current key so "Clear all" leaves nothing behind.
+ */
+const LEGACY_KEY = "excel-word-sections:session";
 const VERSION = 1;
 
 type Envelope = { version: number; data: unknown };
@@ -37,7 +43,11 @@ export function saveSession(data: unknown): void {
 export function loadSession(): unknown {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(KEY);
+    // Fall back to the pre-rename key so a workspace saved under the old name
+    // still loads; the next save writes it back under the current key.
+    const raw =
+      window.localStorage.getItem(KEY) ??
+      window.localStorage.getItem(LEGACY_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Envelope | null;
     if (!parsed || parsed.version !== VERSION) return null;
@@ -52,6 +62,7 @@ export function clearSession(): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(KEY);
+    window.localStorage.removeItem(LEGACY_KEY);
   } catch {
     // ignore
   }

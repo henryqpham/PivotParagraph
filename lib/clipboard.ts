@@ -414,3 +414,82 @@ export function htmlToPlainText(fragment: string): string {
     .replace(/\n{2,}/g, "\n")
     .trim();
 }
+
+/**
+ * Put a rich (`text/html` + `text/plain`) payload on the clipboard, returning
+ * whether it landed. Tries the modern async Clipboard API first, then falls back
+ * to the legacy `execCommand("copy")` + copy-event route.
+ *
+ * The fallback is what makes the SINGLE-FILE build viable: the async API needs a
+ * secure context and a clipboard permission, and a page opened by double-clicking
+ * a `.html` (origin `null`, no HTTPS) is exactly the case where a browser or a
+ * managed-browser policy is most likely to refuse it. The legacy path has no such
+ * requirement — it only needs to run inside a user gesture, which "Copy section"
+ * always is — and it is still the standard way to place HTML (not just text) on
+ * the clipboard. Copy is the app's entire payoff, so it must not depend on one API.
+ *
+ * MUST be called synchronously from a user gesture (a click / keydown handler).
+ */
+export async function writeRichClipboard(
+  html: string,
+  plain: string,
+): Promise<boolean> {
+  if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([plain], { type: "text/plain" }),
+        }),
+      ]);
+      return true;
+    } catch {
+      // Blocked (insecure context, denied permission, unsupported) — fall through.
+    }
+  }
+  return legacyRichCopy(html, plain);
+}
+
+/**
+ * `execCommand("copy")` with a one-shot `copy` listener that overwrites the
+ * payload — the pre-async-API way to put real HTML on the clipboard. Needs a live
+ * selection to copy FROM, so it briefly selects an off-screen node (positioned
+ * off-canvas rather than `display:none`, which cannot be selected) and restores
+ * the user's own selection afterward.
+ */
+function legacyRichCopy(html: string, plain: string): boolean {
+  if (typeof document === "undefined") return false;
+  const onCopy = (e: ClipboardEvent) => {
+    e.preventDefault();
+    e.clipboardData?.setData("text/html", html);
+    e.clipboardData?.setData("text/plain", plain);
+  };
+  // Capture phase so this wins regardless of anything else listening for copy.
+  document.addEventListener("copy", onCopy, true);
+  const holder = document.createElement("div");
+  const selection = window.getSelection();
+  const previous =
+    selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  try {
+    holder.textContent = plain || " ";
+    holder.setAttribute(
+      "style",
+      "position:fixed;left:-9999px;top:0;white-space:pre;opacity:0",
+    );
+    document.body.appendChild(holder);
+    const range = document.createRange();
+    range.selectNodeContents(holder);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.removeEventListener("copy", onCopy, true);
+    holder.remove();
+    // Leave the page as we found it: drop our scratch selection, and put the
+    // user's own back if they had one.
+    selection?.removeAllRanges();
+    if (previous) selection?.addRange(previous);
+  }
+}

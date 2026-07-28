@@ -59,11 +59,11 @@
   --color-warning: var(--warning);
   --color-danger: var(--danger);
 
-  /* Segoe UI chrome (ships on Windows, so no font CDN needed); Geist Mono stays
-     for the JSON preview only. */
+  /* System fonts only — no webfont download, which keeps the single-file build
+     fully self-contained (a file:// page cannot fetch a font CDN). */
   --font-sans: "Segoe UI", "Segoe UI Variable", system-ui, -apple-system,
     "Helvetica Neue", Arial, sans-serif;
-  --font-mono: var(--font-geist-mono), "Cascadia Code", Consolas, monospace;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {

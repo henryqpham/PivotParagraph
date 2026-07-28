@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+  Entry document for the SINGLE-FILE build only (`npm run build:single`).
+
+  Next.js never reads this file — it renders `app/layout.tsx` + `app/page.tsx`.
+  This exists so Vite can bundle the very same `components/` and `lib/` code into
+  one self-contained .html that runs from a file:// double-click, with no server
+  and no network. See docs/ARCHITECTURE.md ("Single-file build").
+-->
+<html lang="en" class="h-full antialiased">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PivotParagraph</title>
+    <meta
+      name="description"
+      content="Turn wide Excel tables into a nested, Word-ready outline that fits the page."
+    />
+  </head>
+  <body class="flex h-full flex-col overflow-hidden">
+    <div id="root" class="flex min-h-0 flex-1 flex-col"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

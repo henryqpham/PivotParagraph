@@ -143,7 +143,7 @@ export const MAX_LEVELS = 9;
 // ---------------------------------------------------------------------------
 
 /** All placed grid columns, in flat (top-to-bottom) order. */
-export function placedColumns(levels: number[][]): number[] {
+function placedColumns(levels: number[][]): number[] {
   return levels.flat();
 }
 
@@ -315,7 +315,7 @@ export function newTable(id: string, grid: Grid): TableState {
  * wide-table → nested-outline transform in one click, without their own
  * spreadsheet. Values are display strings (the parser returns strings).
  */
-export const EXAMPLE_GRID: Grid = [
+const EXAMPLE_GRID: Grid = [
   ["Region", "Country", "Product", "Units", "Revenue"],
   ["Americas", "United States", "Laptops", "120", "$240,000"],
   ["Americas", "United States", "Monitors", "90", "$90,000"],

@@ -102,7 +102,7 @@ export type MarkerDelim =
 export type MarkerSpec = { type: MarkerType; delim: MarkerDelim };
 
 /** The counter/symbol GLYPH for a 0-based sibling `index` (no delimiter). */
-export function markerGlyph(type: MarkerType, index: number): string {
+function markerGlyph(type: MarkerType, index: number): string {
   switch (type) {
     case "decimal":
       return `${index + 1}`;
@@ -124,7 +124,7 @@ export function markerGlyph(type: MarkerType, index: number): string {
 }
 
 /** The literal text of a delimiter. */
-export function delimText(delim: MarkerDelim): string {
+function delimText(delim: MarkerDelim): string {
   switch (delim) {
     case "dot":
       return ".";
@@ -149,14 +149,14 @@ export function isCounterType(type: MarkerType): boolean {
 
 /** Compose a marker for a 0-based sibling `index`: the glyph, plus the delimiter
  *  when the type is a counter (a symbol/none takes no delimiter). */
-export function composeMarker(spec: MarkerSpec, index: number): string {
+function composeMarker(spec: MarkerSpec, index: number): string {
   const glyph = markerGlyph(spec.type, index);
   return isCounterType(spec.type) ? `${glyph}${delimText(spec.delim)}` : glyph;
 }
 
 /** Default marker TYPE for a nesting depth: 1 -> a -> i -> cycle (delimiter
  *  defaults to "dot", matching the old fused "1./a./i." cycle). */
-export function defaultMarkerType(depth: number): MarkerType {
+function defaultMarkerType(depth: number): MarkerType {
   return (["decimal", "lowerAlpha", "lowerRoman"] as const)[(depth - 1) % 3];
 }
 

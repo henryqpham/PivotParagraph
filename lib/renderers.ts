@@ -323,9 +323,16 @@ function multilevelNumbers(
  * space, no marker/number/label) is pushed BEFORE its nested children, so both
  * the preview and the Word paste read "1. Index / blank / a. Group". A childless
  * node gets the blank before its next sibling instead (skipped on the last, so a
- * section never ends on a stray blank). The nbsp keeps Word from dropping the
- * empty paragraph on paste; spacers are emitted outside the lines loop, so they
- * never perturb the marker/number counters.
+ * section never ends on a stray blank).
+ *
+ * GAP AFTER (`gapAfter[depth-1]`): the between-groups counterpart -- the same
+ * spacer after a ticked level's WHOLE subtree, separating one group from the
+ * next ("…8.2 x / blank / 9 Region"); between siblings only. The two options
+ * compose (blank inside a group AND a gap between groups).
+ *
+ * The nbsp keeps Word from dropping the empty paragraph on paste; spacers are
+ * emitted outside the lines loop, so they never perturb the marker/number
+ * counters, and any spacers dangling at the very end of the document are trimmed.
  *
  * The nesting depth rides in a `data-level` ATTRIBUTE, not the tag name (HTML
  * only has h1-h6, and a class like `pl-3` would collide with Tailwind padding
@@ -348,6 +355,7 @@ export function renderPivotTree(
   pageBreakBefore = false,
   headingRanks: number[] = [],
   labelSep = ": ",
+  gapAfter: boolean[] = [],
 ): string {
   const numbered = numbering.mode === "multilevel";
   // Precompute each numbered node's display number (transparent hidden levels, top
@@ -440,6 +448,13 @@ export function renderPivotTree(
       if (breakAfter[depth - 1])
         blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
       if (node.children.length > 0) walk(node.children, level + 1, depth + 1);
+      // GAP AFTER (`gapAfter[depth-1]`): the between-groups counterpart — a
+      // spacer after this node's WHOLE subtree, separating one group from the
+      // next ("…8.2 x / blank / 9 Region"). Between siblings only (skip the
+      // last), so a nested gap never doubles up against the parent's own gap;
+      // the doc-end trim below catches any stray regardless.
+      if (gapAfter[depth - 1] && i < list.length - 1)
+        blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
     });
   };
   if (title) {

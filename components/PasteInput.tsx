@@ -67,6 +67,10 @@ type SessionSnapshot = {
   activeId: string | null;
   labelSep?: string;
   lineSpacing?: string;
+  /** UI preference: opt-in drag-to-reorder on the Rows list (default off — the
+   *  arrow buttons are the primary path). Persisted, but NOT a history-worthy
+   *  edit (see historyChanged) and NOT part of a style preset. */
+  dragRows?: boolean;
 };
 
 /** The post-copy confirmation shown near "Copy section" (and announced to a11y). */
@@ -96,6 +100,8 @@ function historyChanged(a: SessionSnapshot, b: SessionSnapshot): boolean {
     a.titleInput !== b.titleInput ||
     a.labelSep !== b.labelSep ||
     a.lineSpacing !== b.lineSpacing
+    // `dragRows` is deliberately absent — a UI preference (like activeId), so
+    // toggling it never creates an undo step, though it still persists.
   );
 }
 
@@ -204,6 +210,8 @@ export function PasteInput() {
   const [labelSep, setLabelSep] = useState<string>(DEFAULT_LABEL_SEP);
   // Document-wide body line spacing as a string multiplier ("1"/"1.15"/"1.5").
   const [lineSpacing, setLineSpacing] = useState<string>(DEFAULT_LINE_SPACING);
+  // Opt-in drag-to-reorder for the Rows list (⚙ Document). Arrows are default.
+  const [dragRows, setDragRows] = useState<boolean>(false);
 
   // Apply a full workspace snapshot into state — shared by the mount-time
   // localStorage rehydration below AND by Import (a user-selected backup file), so
@@ -219,6 +227,7 @@ export function PasteInput() {
     setTitleInput(s.titleInput ?? DEFAULT_TITLE);
     setLabelSep(s.labelSep ?? DEFAULT_LABEL_SEP);
     setLineSpacing(s.lineSpacing ?? DEFAULT_LINE_SPACING);
+    setDragRows(s.dragRows === true);
     const restoredActive =
       s.tables.find((t) => t.id === s.activeId)?.id ?? s.tables[0]?.id ?? null;
     setActiveId(restoredActive);
@@ -268,6 +277,7 @@ export function PasteInput() {
       activeId,
       labelSep,
       lineSpacing,
+      dragRows,
     }),
     [
       tables,
@@ -279,6 +289,7 @@ export function PasteInput() {
       activeId,
       labelSep,
       lineSpacing,
+      dragRows,
     ],
   );
   useEffect(() => {
@@ -793,6 +804,7 @@ export function PasteInput() {
               headingLevels: data.headingLevels,
               headingRanks: data.headingRanks,
               breakAfter: data.breakAfter,
+              gapAfter: data.gapAfter,
               pageBreakBefore: data.pageBreakBefore,
               fieldLabels: applyLabelsByLevel(t, data.labelsByLevel),
             }),
@@ -1409,6 +1421,8 @@ export function PasteInput() {
                   onHeadingStyleChange={changeHeadingStyleName}
                   title={titleInput}
                   onTitleChange={setTitle}
+                  dragRows={dragRows}
+                  onDragRowsChange={setDragRows}
                   appearance={{
                     levelStyles,
                     onLevelChange: setLevel,

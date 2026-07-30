@@ -24,6 +24,7 @@ import {
   canOutdent,
   indentField,
   moveField,
+  reorderField,
   outdentField,
   removeField,
   unusedColumns,
@@ -324,6 +325,15 @@ type Props = {
   onTitleChange: (patch: Partial<TitleInput>) => void;
   /** Global per-depth body look (all tables), edited in the matrix "Look" column. */
   appearance: AppearanceControls;
+  /**
+   * Opt-in drag-to-reorder on the Rows list (⚙ Document preference, default
+   * OFF — the ◄ ► ▲ ▼ buttons are the primary path and always work). Dragging is
+   * VERTICAL-only by construction: `reorderField` pours the fields back into the
+   * fixed indent skeleton, so a drop can never indent/outdent or stack.
+   */
+  dragRows: boolean;
+  /** Flip the drag-mode preference (the toggle in the Rows card header). */
+  onDragRowsChange: (value: boolean) => void;
 };
 
 function TableCardInner({
@@ -334,6 +344,8 @@ function TableCardInner({
   title,
   onTitleChange,
   appearance,
+  dragRows,
+  onDragRowsChange,
 }: Props) {
   // Start-number field held as a string so it can be cleared/retyped (the card is
   // keyed by table id, so this resets per table).
@@ -486,6 +498,23 @@ function TableCardInner({
     flashRow(col);
   };
 
+  // ---- Optional drag-to-reorder (the ⚙ "Drag to reorder rows" preference) ----
+  // Flat-index drag state, mirroring SectionsRail's pattern: `dragFi` is the row
+  // being dragged (by its ⋮ grip), `overFi` the row under the cursor (for the
+  // drop-indicator line). A drop calls `reorderField` — vertical-only, the indent
+  // skeleton can't change — and flashes the moved field like every other change.
+  const [dragFi, setDragFi] = useState<number | null>(null);
+  const [overFi, setOverFi] = useState<number | null>(null);
+  const endRowDrag = () => {
+    setDragFi(null);
+    setOverFi(null);
+  };
+  const dropRow = (targetFi: number) => {
+    if (dragFi !== null && dragFi !== targetFi)
+      applyMove(placed[dragFi].col, reorderField(pivotLevels, dragFi, targetFi));
+    endRowDrag();
+  };
+
   function patchLabel(col: number, patch: Partial<FieldLabel>) {
     const cur = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
     onChange({
@@ -609,7 +638,40 @@ function TableCardInner({
              field's own label/sort). Everything that formats a whole LEVEL lives
              in the separate "Level formatting" card below. ---------------------- */}
       <section className={CARD}>
-        <h2 className={GROUP_HEADER}>Rows</h2>
+        {/* Card header with the drag-mode TOGGLE on the right — the preference
+            lives where it acts (hiding it in ⚙ read as weird). Off = the ◄ ► ▲ ▼
+            buttons; on = a ⋮ grip per row and the ▲ ▼ pair hides (drag replaces
+            exactly that reorder job; ◄ ► stay — a drag is vertical-only). */}
+        <div className={`${GROUP_HEADER} flex items-center justify-between gap-2`}>
+          <h2>Rows</h2>
+          <label className="flex cursor-pointer items-center gap-1.5 normal-case tracking-normal">
+            <span
+              className="text-[11px] font-medium text-text-secondary"
+              title="Reorder rows by dragging their ⋮ grip (up/down only — ◄ ► still change the level). Off = the ▲ ▼ buttons."
+            >
+              Drag to reorder
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={dragRows}
+              aria-label="Drag to reorder rows (up and down only)"
+              onClick={() => onDragRowsChange(!dragRows)}
+              className={`relative h-4 w-8 shrink-0 rounded-full transition-colors ${
+                dragRows
+                  ? "bg-accent"
+                  : "bg-[color:color-mix(in_srgb,var(--muted)_35%,transparent)]"
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-[var(--shadow-2)] transition-all ${
+                  dragRows ? "left-[18px]" : "left-0.5"
+                }`}
+              />
+            </button>
+          </label>
+        </div>
 
         {headers.length === 0 ? (
           <p className="text-sm text-muted">Paste a table to build the outline.</p>
@@ -723,15 +785,70 @@ function TableCardInner({
                     const g = guides[fi];
                     const owner = k === 0;
                     const sample = String(sampleRow[col] ?? "").trim();
+                    const isDropTarget =
+                      overFi === fi && dragFi !== null && dragFi !== fi;
+                    // Splice semantics: dragged DOWN lands after the target
+                    // (line on its bottom edge), dragged UP lands before it
+                    // (line on top) — matching where the row actually ends up.
+                    const dropBelow =
+                      isDropTarget && dragFi !== null && dragFi < fi;
                     return (
                       <Fragment key={col}>
                         <div
-                          className={`group flex min-h-[36px] items-center gap-1.5 rounded px-1 transition-colors duration-300 motion-reduce:transition-none ${
+                          onDragOver={
+                            dragRows
+                              ? (e) => {
+                                  if (dragFi === null) return;
+                                  e.preventDefault();
+                                  e.dataTransfer.dropEffect = "move";
+                                  if (overFi !== fi) setOverFi(fi);
+                                }
+                              : undefined
+                          }
+                          onDrop={
+                            dragRows
+                              ? (e) => {
+                                  e.preventDefault();
+                                  dropRow(fi);
+                                }
+                              : undefined
+                          }
+                          className={`group relative flex min-h-[36px] items-center gap-1.5 rounded px-1 transition-colors duration-300 motion-reduce:transition-none ${
+                            dragFi === fi ? "opacity-40" : ""
+                          } ${
                             flashCol === col
                               ? "bg-[color:color-mix(in_srgb,var(--accent)_20%,transparent)] ring-1 ring-inset ring-[color:color-mix(in_srgb,var(--accent)_45%,transparent)]"
                               : "hover:bg-surface-alt"
                           }`}
                         >
+                          {isDropTarget && (
+                            <span
+                              aria-hidden
+                              className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent ${
+                                dropBelow ? "bottom-0" : "top-0"
+                              }`}
+                            />
+                          )}
+                          {/* ⋮ drag grip — only in the opt-in drag mode. Drags
+                              reorder VERTICALLY only (reorderField keeps the
+                              indent skeleton); ◄ ► ▲ ▼ keep working regardless. */}
+                          {dragRows && (
+                            <span
+                              draggable
+                              onDragStart={(e) => {
+                                setDragFi(fi);
+                                e.dataTransfer.effectAllowed = "move";
+                                // Firefox needs data set for a drag to initiate.
+                                e.dataTransfer.setData("text/plain", String(col));
+                              }}
+                              onDragEnd={endRowDrag}
+                              aria-hidden
+                              title="Drag to reorder (up/down only — use ◄ ► to change level)"
+                              className="grid h-6 w-4 shrink-0 cursor-grab place-items-center rounded text-xs leading-none text-muted opacity-40 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
+                            >
+                              &#8942;
+                            </span>
+                          )}
                           {/* Explorer tree-line guides: b ancestor cells + 1 elbow */}
                           <span aria-hidden className="flex self-stretch">
                             {g.ancestors.map((cont, a) => (
@@ -864,30 +981,37 @@ function TableCardInner({
                             >
                               ►
                             </button>
-                            <button
-                              type="button"
-                              aria-label={`Move ${name} up`}
-                              title="Move up"
-                              disabled={fi === 0}
-                              onClick={() =>
-                                applyMove(col, moveField(pivotLevels, fi, -1))
-                              }
-                              className={icon}
-                            >
-                              ▲
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Move ${name} down`}
-                              title="Move down"
-                              disabled={fi === placed.length - 1}
-                              onClick={() =>
-                                applyMove(col, moveField(pivotLevels, fi, 1))
-                              }
-                              className={icon}
-                            >
-                              ▼
-                            </button>
+                            {/* ▲ ▼ hide in drag mode — the ⋮ grip replaces
+                                exactly this reorder job (◄ ► stay: a drag is
+                                vertical-only, so they remain the level controls). */}
+                            {!dragRows && (
+                              <>
+                                <button
+                                  type="button"
+                                  aria-label={`Move ${name} up`}
+                                  title="Move up"
+                                  disabled={fi === 0}
+                                  onClick={() =>
+                                    applyMove(col, moveField(pivotLevels, fi, -1))
+                                  }
+                                  className={icon}
+                                >
+                                  ▲
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={`Move ${name} down`}
+                                  title="Move down"
+                                  disabled={fi === placed.length - 1}
+                                  onClick={() =>
+                                    applyMove(col, moveField(pivotLevels, fi, 1))
+                                  }
+                                  className={icon}
+                                >
+                                  ▼
+                                </button>
+                              </>
+                            )}
                             <button
                               type="button"
                               aria-label={`Remove ${name}`}
@@ -1007,9 +1131,15 @@ function TableCardInner({
                 )}
                 <span
                   className="w-16 shrink-0 text-center"
-                  title="Blank line between this level's groups"
+                  title="Blank line right after this level's line, before its nested rows (8 Region / blank / 8.1 …)"
                 >
                   Blank line
+                </span>
+                <span
+                  className="w-16 shrink-0 text-center"
+                  title="Blank line after each of this level's whole groups, between one group and the next (…8.2 x / blank / 9 Region)"
+                >
+                  Gap after
                 </span>
                 <span className="w-20 shrink-0 text-center">Heading</span>
                 <span
@@ -1141,10 +1271,8 @@ function TableCardInner({
                           )}
                         </div>
                       )}
-                      {/* Blank line after this level's groups — per level, this
-                          section. The renderer already reads breakAfter[depth-1];
-                          the spacer lands BETWEEN sibling groups (never after the
-                          last), so ticking a deep level airs out dense runs. */}
+                      {/* Blank line — right after this level's own line, before
+                          its nested rows (breakAfter[depth-1]). */}
                       <div className="flex w-16 shrink-0 items-center justify-center">
                         <input
                           type="checkbox"
@@ -1154,8 +1282,24 @@ function TableCardInner({
                             next[i] = e.target.checked;
                             onChange({ breakAfter: next });
                           }}
-                          aria-label={`Blank line between level ${i + 1} groups`}
-                          title={`Add a blank line between ${label} groups (this section)`}
+                          aria-label={`Blank line after each level ${i + 1} line, before its nested rows`}
+                          title={`Blank line right after each ${label} line, before its nested rows`}
+                          className="accent-[var(--accent)]"
+                        />
+                      </div>
+                      {/* Gap after — after each of this level's WHOLE groups,
+                          separating one group from the next (gapAfter[depth-1]). */}
+                      <div className="flex w-16 shrink-0 items-center justify-center">
+                        <input
+                          type="checkbox"
+                          checked={table.gapAfter?.[i] === true}
+                          onChange={(e) => {
+                            const next = [...(table.gapAfter ?? [])];
+                            next[i] = e.target.checked;
+                            onChange({ gapAfter: next });
+                          }}
+                          aria-label={`Gap after each level ${i + 1} group`}
+                          title={`Blank line after each whole ${label} group, between one group and the next`}
                           className="accent-[var(--accent)]"
                         />
                       </div>

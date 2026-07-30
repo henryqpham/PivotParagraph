@@ -49,11 +49,20 @@ export type TableState = {
    */
   sortDirs: Record<number, "asc" | "desc">;
   /**
-   * "Blank line after" toggle per indent level (index = level − 1, like
-   * `markers`). When on, the renderer pushes one empty spacer paragraph after
-   * that level's whole node-subtree. Sparse/short → off.
+   * "Blank line" toggle per indent level (index = level − 1, like `markers`).
+   * When on, the renderer pushes one empty spacer paragraph right after that
+   * level's OWN line, before its nested children ("8 Region / blank / 8.1 …").
+   * Sparse/short → off.
    */
   breakAfter: boolean[];
+  /**
+   * "Gap after" toggle per indent level (index = level − 1). When on, the
+   * renderer pushes one empty spacer paragraph after that level's WHOLE
+   * node-subtree, between one group and the next ("…8.2 x / blank / 9 Region").
+   * The between-groups counterpart of `breakAfter`'s within-group blank; the
+   * two compose. Optional so older sessions/imports stay compatible.
+   */
+  gapAfter?: boolean[];
   /**
    * App-drawn static multilevel numbering for this table (off by default). When
    * on, the renderer prefixes each node's first line with its compounded number
@@ -255,6 +264,35 @@ export function moveField(levels: number[][], fi: number, dir: -1 | 1): number[]
 }
 
 /**
+ * Move the field at flat index `from` to flat index `to`, keeping the bucket
+ * SHAPE fixed — the reordered fields pour back into the existing indent slots,
+ * so a drag is VERTICAL-only by construction (a field adopts its landing slot's
+ * level; the structure of levels never changes). This is the drag-to-reorder
+ * counterpart of `moveField`'s single-step swap: one drop can cross many rows,
+ * shifting everything in between by one slot. Pure; no-op on a bad/same index.
+ */
+export function reorderField(
+  levels: number[][],
+  from: number,
+  to: number,
+): number[][] {
+  const flat = levels.flat();
+  if (
+    from < 0 ||
+    from >= flat.length ||
+    to < 0 ||
+    to >= flat.length ||
+    from === to
+  )
+    return levels;
+  const next = [...flat];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  let k = 0;
+  return levels.map((bucket) => bucket.map(() => next[k++]));
+}
+
+/**
  * Drop fully-empty columns from a freshly parsed grid — a column whose every cell
  * (header included) is blank is a spacer/padding artifact that would otherwise
  * clutter the Add-fields pool and merge as "(blank)" everywhere. Keeps column
@@ -415,6 +453,7 @@ export function tableToHtml(
     t.pageBreakBefore ?? false,
     t.headingRanks ?? [],
     labelSep,
+    t.gapAfter ?? [],
   );
 }
 

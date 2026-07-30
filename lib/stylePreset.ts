@@ -43,6 +43,7 @@ export type StylePresetData = {
   headingLevels: boolean[];
   headingRanks: number[];
   breakAfter: boolean[];
+  gapAfter: boolean[];
   pageBreakBefore: boolean;
   /**
    * The Rows card's per-field LABEL emphasis (show / bold / italic / underline),
@@ -109,6 +110,7 @@ export function buildStylePreset(
       headingLevels: active ? active.headingLevels : [],
       headingRanks: active?.headingRanks ?? [],
       breakAfter: active ? active.breakAfter : [],
+      gapAfter: active?.gapAfter ?? [],
       pageBreakBefore: active?.pageBreakBefore ?? false,
       // Project the column-keyed label emphasis onto the arrangement's levels
       // (position [level][stack-slot]) so it survives a change of table shape.
@@ -212,6 +214,7 @@ export function parseStylePreset(parsed: unknown): StylePresetData | null {
     headingLevels: arr<boolean>((d as StylePresetData).headingLevels),
     headingRanks: arr<number>((d as StylePresetData).headingRanks),
     breakAfter: arr<boolean>((d as StylePresetData).breakAfter),
+    gapAfter: arr<boolean>((d as StylePresetData).gapAfter),
     pageBreakBefore: (d as StylePresetData).pageBreakBefore === true,
     // Lenient, shape-checked read: each entry must be an array of objects; each
     // label is normalized over the default so partial/hand-edited entries load.

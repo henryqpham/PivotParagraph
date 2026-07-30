@@ -17,7 +17,11 @@ import {
 } from "@/lib/clipboard";
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
 import { loadSession, saveSession, clearSession } from "@/lib/persistence";
-import { buildStylePreset, parseStylePreset } from "@/lib/stylePreset";
+import {
+  applyLabelsByLevel,
+  buildStylePreset,
+  parseStylePreset,
+} from "@/lib/stylePreset";
 import {
   tableToHtml,
   newTable,
@@ -777,7 +781,9 @@ export function PasteInput() {
           setLineSpacing(data.lineSpacing as string);
         // Level-keyed settings onto EVERY section. structuredClone per table so
         // sections share no references; `markers: undefined` drops the legacy
-        // fused field (markerSpecs is authoritative).
+        // fused field (markerSpecs is authoritative). The Rows-card label
+        // emphasis re-applies by LEVEL POSITION to each section's placed fields
+        // (applyLabelsByLevel) — the column-keyed part the preset can't carry raw.
         setTables((ts) =>
           ts.map((t) => ({
             ...t,
@@ -788,6 +794,7 @@ export function PasteInput() {
               headingRanks: data.headingRanks,
               breakAfter: data.breakAfter,
               pageBreakBefore: data.pageBreakBefore,
+              fieldLabels: applyLabelsByLevel(t, data.labelsByLevel),
             }),
             markers: undefined,
           })),

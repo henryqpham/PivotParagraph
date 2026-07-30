@@ -17,6 +17,7 @@
 import type { LevelInput, TableState } from "@/components/tableModel";
 import { resolveMarkerSpecs } from "@/components/tableModel";
 import type { TitleInput } from "@/components/TableCard";
+import { DEFAULT_FIELD_LABEL, type FieldLabel } from "@/lib/types";
 import {
   DEFAULT_NUMBERING,
   type MarkerSpec,
@@ -43,6 +44,18 @@ export type StylePresetData = {
   headingRanks: number[];
   breakAfter: boolean[];
   pageBreakBefore: boolean;
+  /**
+   * The Rows card's per-field LABEL emphasis (show / bold / italic / underline),
+   * re-keyed from grid columns to LEVEL POSITION so it transfers: entry [i][j] is
+   * the label look of level i+1's j-th stacked field in the SOURCE arrangement.
+   * `fieldLabels` itself is column-indexed and can't cross table shapes — this is
+   * the level-keyed projection of it ("tie the preference to the row level").
+   * Applied on import to each section's PLACED fields by the same [level][slot]
+   * position (a slot past the source's stack depth reuses the last entry); a
+   * field added after the import starts from the default label look. Optional so
+   * presets saved before this field existed still load.
+   */
+  labelsByLevel?: FieldLabel[][];
 };
 
 /** The on-disk envelope. `kind` guards against feeding a WORKSPACE backup (or any
@@ -97,8 +110,43 @@ export function buildStylePreset(
       headingRanks: active?.headingRanks ?? [],
       breakAfter: active ? active.breakAfter : [],
       pageBreakBefore: active?.pageBreakBefore ?? false,
+      // Project the column-keyed label emphasis onto the arrangement's levels
+      // (position [level][stack-slot]) so it survives a change of table shape.
+      labelsByLevel: active
+        ? active.pivotLevels.map((bucket) =>
+            bucket.map((col) => ({
+              ...DEFAULT_FIELD_LABEL,
+              ...(active.fieldLabels[col] ?? {}),
+            })),
+          )
+        : [],
     },
   };
+}
+
+/**
+ * Re-apply a preset's level-keyed label emphasis to ONE table's column-keyed
+ * `fieldLabels`: the field at level i, stack slot j takes entry [i][j] (a slot
+ * past the source's stack depth reuses the last entry — the common case is a
+ * deeper stack in the target). Fields in levels beyond the preset's depth, and
+ * unplaced columns, keep their current settings. Pure; returns a fresh record.
+ */
+export function applyLabelsByLevel(
+  table: TableState,
+  labelsByLevel: FieldLabel[][] | undefined,
+): Record<number, FieldLabel> {
+  if (!labelsByLevel || labelsByLevel.length === 0)
+    return table.fieldLabels ?? {};
+  const next: Record<number, FieldLabel> = { ...(table.fieldLabels ?? {}) };
+  table.pivotLevels.forEach((bucket, i) => {
+    const levelLabels = labelsByLevel[i];
+    if (!levelLabels || levelLabels.length === 0) return;
+    bucket.forEach((col, j) => {
+      const src = levelLabels[Math.min(j, levelLabels.length - 1)];
+      next[col] = { ...DEFAULT_FIELD_LABEL, ...src };
+    });
+  });
+  return next;
 }
 
 const NUMBERING_MODES = new Set(["off", "custom", "multilevel"]);
@@ -165,5 +213,13 @@ export function parseStylePreset(parsed: unknown): StylePresetData | null {
     headingRanks: arr<number>((d as StylePresetData).headingRanks),
     breakAfter: arr<boolean>((d as StylePresetData).breakAfter),
     pageBreakBefore: (d as StylePresetData).pageBreakBefore === true,
+    // Lenient, shape-checked read: each entry must be an array of objects; each
+    // label is normalized over the default so partial/hand-edited entries load.
+    labelsByLevel: arr<unknown>((d as StylePresetData).labelsByLevel).map((lvl) =>
+      arr<unknown>(lvl).map((l) => ({
+        ...DEFAULT_FIELD_LABEL,
+        ...(l && typeof l === "object" ? (l as Partial<FieldLabel>) : {}),
+      })),
+    ),
   };
 }

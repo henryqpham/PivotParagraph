@@ -40,7 +40,7 @@ Pipeline per table: add (paste / file) → `parseClipboard`/`parseFile` (Grid) �
 - `components/Popover.tsx` — shared popover helper
 - `lib/types.ts` — `PivotNode`/`PivotLine`, `FieldLabel`, Grid types
 - `lib/parser.ts` — SheetJS clipboard → Grid (`parseClipboard`) + file → Grid (`parseFile`, `XLSX.read` arrayBuffer); shared `firstSheetToGrid`
-- `lib/stylePreset.ts` — style-preset build/validate: FORMATTING only (globals + LEVEL-indexed per-table settings), versioned envelope; applied to all sections on import (PasteInput `exportStylePreset`/`handlePresetFile`)
+- `lib/stylePreset.ts` — style-preset build/validate/apply: FORMATTING only (globals + LEVEL-indexed per-table settings + `labelsByLevel`, the Rows-card label emphasis projected by level and re-applied positionally via `applyLabelsByLevel`), versioned envelope; applied to all sections on import (PasteInput `exportStylePreset`/`handlePresetFile`)
 - `lib/mapper.ts` — `rowsToPivotTree` (buckets → merged tree) + `sortTree` post-pass
 - `lib/renderers.ts` — `renderPivotTree` (title row + `data-level`/`data-heading`/`data-break` paragraphs, markers, app-drawn multilevel numbers; escapes all user text)
 - `lib/persistence.ts` — versioned `localStorage` save/load/clear (generic, SSR-safe)

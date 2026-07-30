@@ -71,7 +71,7 @@ The pinned right pane shows the active section on a **true-to-scale US-Letter pa
 Each pasted table is a row in the left **Sections rail** — **its own standalone Word document**, not a stacked section. Drag to reorder (or grip ⋮ + ↑/↓), **⧉** to duplicate, ✕ to remove; cap 100.
 
 
-Document-wide settings — **Body font** (default **Calibri**, Excel's own default, so output reads like the source), **Line spacing**, **Label separator**, **Indent/level**, and **Reset levels** — live in the **⚙ Document** popover. It also holds the **Style preset**: export your formatting (level looks, markers, numbering, headings, blank lines, fonts — everything keyed by *level*, never by column) as a `.json`, then import it onto next week's completely different table and every section adopts the house style in one undoable step.
+Document-wide settings — **Body font** (default **Calibri**, Excel's own default, so output reads like the source), **Line spacing**, **Label separator**, **Indent/level**, and **Reset levels** — live in the **⚙ Document** popover. It also holds the **Style preset**: export your formatting (level looks, markers, numbering, headings, blank lines, fonts, and the Rows-card label bold/italic/underline — everything keyed by *level*, never by column) as a `.json`, then import it onto next week's completely different table and every section adopts the house style in one undoable step.
 
 Everything is **undoable** (Ctrl+Z / Ctrl+Y), and the whole workspace **auto-saves to your browser** (local only, nothing uploaded). **Ctrl/Cmd + K** opens a command palette over every action.
 

@@ -154,9 +154,9 @@ export function applyLabelsByLevel(
 const NUMBERING_MODES = new Set(["off", "custom", "multilevel"]);
 
 // Fallback title look for a preset missing/mangling `titleInput` — matches
-// PasteInput's DEFAULT_TITLE (Calibri 11 black, Excel's default font).
+// PasteInput's DEFAULT_TITLE (Aptos 11 black, Microsoft 365's default font).
 const FALLBACK_TITLE: TitleInput = {
-  font: "Calibri",
+  font: "Aptos",
   sizeInput: "11",
   color: "#000000",
   bold: false,
@@ -205,7 +205,7 @@ export function parseStylePreset(parsed: unknown): StylePresetData | null {
     levelStyles: arr<LevelInput>((d as StylePresetData).levelStyles),
     titleInput,
     headingStyleName: str((d as StylePresetData).headingStyleName, ""),
-    bodyFont: str((d as StylePresetData).bodyFont, "Calibri"),
+    bodyFont: str((d as StylePresetData).bodyFont, "Aptos"),
     indentInput: str((d as StylePresetData).indentInput, "0.2"),
     labelSep: (d as StylePresetData).labelSep,
     lineSpacing: (d as StylePresetData).lineSpacing,

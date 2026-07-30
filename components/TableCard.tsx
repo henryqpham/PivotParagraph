@@ -7,7 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import { headingLevel } from "@/lib/clipboard";
 import {
@@ -49,6 +48,7 @@ export type TitleInput = {
 /** Allow-listed body/title fonts. Exported so PasteInput's Document popover can
  *  reuse the same list without redefining it. */
 export const FONTS = [
+  "Aptos",
   "Calibri Light",
   "Calibri",
   "Arial",
@@ -455,22 +455,10 @@ function TableCardInner({
 
   const guides = useMemo(() => rowGuides(placed), [placed]);
 
-  // First data row — one representative value per column, for the live
-  // micro-preview that renders each field styled in its level's real look.
-  const sampleRow = useMemo(() => bodyGrid(table)[1] ?? [], [table]);
-
-  // The resolved on-page look for a bucket's rows (mirrors the renderer/preview):
-  // the shared per-depth level style, its font falling back to the Body font.
-  const levelLook = (b: number): CSSProperties => {
-    const lv = appearance.levelStyles[levelIdxForBucket(b)] ?? DEFAULT_LEVEL;
-    return {
-      color: lv.color || "#000000",
-      fontFamily: lv.font || appearance.bodyFont,
-      fontWeight: lv.bold ? 700 : 400,
-      fontStyle: lv.italic ? "italic" : "normal",
-      textDecoration: lv.underline ? "underline" : "none",
-    };
-  };
+  // (A "live micro-preview" once rendered each field name in its level's real
+  // look with a sample value from the first data row — removed on feedback: the
+  // enriched text read as noise, and the right-pane preview already shows the
+  // real output. Field names are plain UI text like every other control.)
 
   // ---- "What just moved?" highlight ----------------------------------------
   // Reordering/indenting shifts a row out from under the cursor, which makes it
@@ -784,7 +772,6 @@ function TableCardInner({
                     const lf = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
                     const g = guides[fi];
                     const owner = k === 0;
-                    const sample = String(sampleRow[col] ?? "").trim();
                     const isDropTarget =
                       overFi === fi && dragFi !== null && dragFi !== fi;
                     // Splice semantics: dragged DOWN lands after the target
@@ -866,21 +853,11 @@ function TableCardInner({
                           >
                             {b + 1}
                           </span>
-                          {/* Field name — a live micro-preview in the level's REAL
-                              look — plus a faint sample value from the first row. */}
-                          <span className="flex min-w-0 flex-1 items-baseline gap-1.5 truncate">
-                            <span
-                              style={levelLook(b)}
-                              title={`Renders in level ${b + 1}'s look`}
-                              className="truncate text-[13px] leading-tight"
-                            >
-                              {name}
-                            </span>
-                            {sample && (
-                              <span className="truncate text-[11px] text-muted">
-                                {sample}
-                              </span>
-                            )}
+                          {/* Field name — plain UI text (the styled micro-preview
+                              + sample value were removed on feedback; the right
+                              pane shows the real output). */}
+                          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
+                            {name}
                           </span>
                           {/* Per-FIELD controls: show / bold / italic / underline
                               the label, then sort — on every row. */}

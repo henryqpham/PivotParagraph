@@ -42,11 +42,11 @@ import { CommandPalette, type Command } from "./CommandPalette";
 
 const MAX_TABLES = 100;
 
-// Default TITLE look (its own shared style — Calibri 11 black, matching Excel's
-// default font so the output reads like the source; only shows when the Heading
-// dropdown is None).
+// Default TITLE look (its own shared style — Aptos 11 black, Microsoft 365's
+// current default font, so the output reads like the source; only shows when
+// the Heading dropdown is None).
 const DEFAULT_TITLE: TitleInput = {
-  font: "Calibri",
+  font: "Aptos",
   sizeInput: "11",
   color: "#000000",
   bold: false,
@@ -196,14 +196,15 @@ export function PasteInput() {
   const hydratedRef = useRef(false);
 
   // Document body font (default Arial).
-  const [bodyFont, setBodyFont] = useState<string>("Calibri");
+  const [bodyFont, setBodyFont] = useState<string>("Aptos");
   // Per-level BODY styling, shared across tables (the "level chart"). Sparse.
   const [levelStyles, setLevelStyles] = useState<LevelInput[]>([]);
   // Left-indent per nesting level (inches), clamped [0, 2].
   const [indentInput, setIndentInput] = useState<string>("0.2");
   // Global Word heading style the TITLE maps to ("" = None). Driven by the
   // Section Title dropdown in TableCard.
-  const [headingStyleName, setHeadingStyleName] = useState<string>("Heading 1");
+  // "" = None: a new workspace applies NO Word-heading mapping until chosen.
+  const [headingStyleName, setHeadingStyleName] = useState<string>("");
   // Shared TITLE look (its own controls in the Section Title group).
   const [titleInput, setTitleInput] = useState<TitleInput>(DEFAULT_TITLE);
   // Document-wide `Field name<sep>value` separator (allow-listed; default ": ").
@@ -221,9 +222,9 @@ export function PasteInput() {
   const applySnapshot = useCallback((s: SessionSnapshot) => {
     setTables(s.tables);
     setLevelStyles(Array.isArray(s.levelStyles) ? s.levelStyles : []);
-    setBodyFont(s.bodyFont ?? "Calibri");
+    setBodyFont(s.bodyFont ?? "Aptos");
     setIndentInput(s.indentInput ?? "0.2");
-    setHeadingStyleName(s.headingStyleName ?? "Heading 1");
+    setHeadingStyleName(s.headingStyleName ?? "");
     setTitleInput(s.titleInput ?? DEFAULT_TITLE);
     setLabelSep(s.labelSep ?? DEFAULT_LABEL_SEP);
     setLineSpacing(s.lineSpacing ?? DEFAULT_LINE_SPACING);
@@ -916,8 +917,8 @@ export function PasteInput() {
     // maps to a heading only if a Heading style is chosen AND the title has text
     // (a blank title renders no `ws-title`), and a body level maps only if it's
     // both marked AND actually exists in the structure. Otherwise the "Use
-    // Destination Styles" guidance would be misleading (the dropdown defaults to
-    // "Heading 1", so a naive check is almost always true).
+    // Destination Styles" guidance would be misleading when nothing actually
+    // maps (a chosen style with a blank title emits no heading, for instance).
     const titleIsHeading =
       headingStyleName !== "" && activeTable.sectionTitle.trim() !== "";
     const bodyHasHeading = (activeTable.headingLevels ?? []).some(

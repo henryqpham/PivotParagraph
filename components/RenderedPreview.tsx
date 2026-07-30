@@ -98,7 +98,7 @@ export function RenderedPreview({
   // template look only shows on paste; this preview uses the per-level look.
   const FALLBACK = {
     color: "#000000",
-    font: "Calibri",
+    font: "Aptos",
     size: 11,
     bold: false,
     italic: false,
@@ -123,7 +123,7 @@ export function RenderedPreview({
   // level chart -- so read it from headingStyle.titleStyle, with italic/underline.
   const t = headingStyle.titleStyle ?? {
     color: "#000000",
-    font: "Calibri",
+    font: "Aptos",
     size: 11,
     bold: false,
     italic: false,

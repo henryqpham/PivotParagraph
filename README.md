@@ -44,7 +44,7 @@ The title text, a **Word heading** dropdown (None / Heading 1–4 / **Custom sty
 ### 2. Rows — *per field*
 Add fields from the pool, then shape one row per field, drawn with Explorer-style tree lines (│ ├ └). Arrange with **◄** outdent · **►** indent · **▲ ▼** reorder · **✕** remove — or flip the **Drag to reorder** toggle in the card's top-right for a ⋮ grip per row (off by default; dragging is up/down only, so ◄ ► stay the level controls, and ▲ ▼ hide since the grip replaces them). The row you just changed **briefly highlights** so you don't lose it mid-move.
 
-Each field name renders as a **live micro-preview in its level's real look**, with a faint sample value from the first data row. Per field: toggle the `Field name:` label off, **bold**/*italic*/underline it (`Aa` `B` `I` `U` — these affect **only** the label, the text before the colon), and **sort** that field's groups (↕ / ↑ / ↓ — numeric *and* text aware, so `2` sorts before `10`).
+Per field: toggle the `Field name:` label off, **bold**/*italic*/underline it (`Aa` `B` `I` `U` — these affect **only** the label, the text before the colon), and **sort** that field's groups (↕ / ↑ / ↓ — numeric *and* text aware, so `2` sorts before `10`).
 
 Depth is capped at **9 levels** (the most Word shows) with a live N/9 chip; a field added past the cap stacks into the deepest level. Fields stacked at one level show together at the same indent and merge when their values match.
 
@@ -72,7 +72,7 @@ The pinned right pane shows the active section on a **true-to-scale US-Letter pa
 Each pasted table is a row in the left **Sections rail** — **its own standalone Word document**, not a stacked section. Drag to reorder (or grip ⋮ + ↑/↓), **⧉** to duplicate, ✕ to remove; cap 100.
 
 
-Document-wide settings — **Body font** (default **Calibri**, Excel's own default, so output reads like the source), **Line spacing**, **Label separator**, **Indent/level**, and **Reset levels** — live in the **⚙ Document** popover. It also holds the **Style preset**: export your formatting (level looks, markers, numbering, headings, blank lines, fonts, and the Rows-card label bold/italic/underline — everything keyed by *level*, never by column) as a `.json`, then import it onto next week's completely different table and every section adopts the house style in one undoable step.
+Document-wide settings — **Body font** (default **Aptos** 11 — Microsoft 365's standard font — so output reads like a native document; Arial/Calibri stay in the list), **Line spacing**, **Label separator**, **Indent/level**, and **Reset levels** — live in the **⚙ Document** popover. It also holds the **Style preset**: export your formatting (level looks, markers, numbering, headings, blank lines, fonts, and the Rows-card label bold/italic/underline — everything keyed by *level*, never by column) as a `.json`, then import it onto next week's completely different table and every section adopts the house style in one undoable step.
 
 Everything is **undoable** (Ctrl+Z / Ctrl+Y), and the whole workspace **auto-saves to your browser** (local only, nothing uploaded). **Ctrl/Cmd + K** opens a command palette over every action.
 

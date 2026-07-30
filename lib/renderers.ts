@@ -193,10 +193,11 @@ export type NumberingConfig = {
   levels: boolean[];
 };
 
-/** The default numbering config (per-level custom markers); shared by the
- *  renderer and TableState. */
+/** The default numbering config; shared by the renderer and TableState. */
+// Mode "off" ON PURPOSE: a fresh paste carries NO preset formatting — no
+// markers, no numbers — until the user picks a Markers mode themselves.
 export const DEFAULT_NUMBERING: NumberingConfig = {
-  mode: "custom",
+  mode: "off",
   start: "1",
   levels: [],
 };

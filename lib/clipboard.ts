@@ -96,7 +96,7 @@ export function headingLevel(name: string): number {
 // Guard if a level entry is ever absent (callers pass a full 9-entry array).
 const FALLBACK_LEVEL: LevelStyle = {
   color: "#000000",
-  font: "Arial",
+  font: "Calibri",
   size: 11,
   bold: false,
   italic: false,
@@ -105,7 +105,7 @@ const FALLBACK_LEVEL: LevelStyle = {
 
 // Title default when no `titleStyle` is supplied (matches the old level-1 look).
 const FALLBACK_TITLE: TitleStyle = {
-  font: "Arial",
+  font: "Calibri",
   size: 11,
   color: "#000000",
   bold: false,

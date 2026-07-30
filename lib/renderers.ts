@@ -318,13 +318,14 @@ function multilevelNumbers(
  * number PATH still computes so deeper body rows still nest (TYPE → Word "5.1",
  * TITLE → app "5.1.1"). Usually just the top level or two.
  *
- * BLANK LINE AFTER (`breakAfter[depth-1]`): after a node's WHOLE subtree, an
+ * BLANK LINE (`breakAfter[depth-1]`): after a ticked level's OWN line(s), an
  * empty spacer paragraph (`<p ... data-level="N">&#160;</p>` -- a non-breaking
- * space, no marker/number/label) is pushed, so both the preview and the Word
- * paste show a blank line between that level's groups. The nbsp keeps Word from
- * dropping the empty paragraph on paste. Sibling counting is by NODE position,
- * and spacers are emitted AFTER a node's subtree, so they never perturb the
- * marker/number counters.
+ * space, no marker/number/label) is pushed BEFORE its nested children, so both
+ * the preview and the Word paste read "1. Index / blank / a. Group". A childless
+ * node gets the blank before its next sibling instead (skipped on the last, so a
+ * section never ends on a stray blank). The nbsp keeps Word from dropping the
+ * empty paragraph on paste; spacers are emitted outside the lines loop, so they
+ * never perturb the marker/number counters.
  *
  * The nesting depth rides in a `data-level` ATTRIBUTE, not the tag name (HTML
  * only has h1-h6, and a class like `pl-3` would collide with Tailwind padding
@@ -428,12 +429,17 @@ export function renderPivotTree(
           `<p class="ws-lvl" data-level="${lvl}"${breakAttr}${headingAttr}>${prefix}${label}${value}</p>`,
         );
       });
-      if (node.children.length > 0) walk(node.children, level + 1, depth + 1);
-      // Spacer AFTER the whole subtree, so it never affects sibling counters. Only
-      // BETWEEN siblings (not after the last), so a section doesn't end on a stray
-      // blank paragraph — matches the "blank line between groups" wording.
-      if (breakAfter[depth - 1] && i < list.length - 1)
+      // Spacer AFTER this level's own line(s) — a breathing line BETWEEN the
+      // ticked level and whatever follows it (its nested children, or the next
+      // group: "1. Index / blank / a. Group", or "a. Group / blank / 2. Index").
+      // Emitted UNCONDITIONALLY — deciding "does anything follow?" here would
+      // need the DOCUMENT tail, not this sibling list (a sole child is always
+      // its list's last sibling, which would wrongly suppress every blank on a
+      // one-child-per-group level); trailing strays are trimmed after the walk.
+      // Outside the lines loop, so it never perturbs the marker/number counters.
+      if (breakAfter[depth - 1])
         blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
+      if (node.children.length > 0) walk(node.children, level + 1, depth + 1);
     });
   };
   if (title) {
@@ -444,5 +450,16 @@ export function renderPivotTree(
   } else {
     walk(nodes, 1, 1);
   }
+  // A section never ENDS on blank lines: drop any spacers dangling at the very
+  // end of the document (the last row of a ticked level has nothing to breathe
+  // before). Matched exactly on the spacer shape emitted above, so a real data
+  // row containing "&#160;" (escaped on input) can never be trimmed.
+  while (
+    blocks.length > 0 &&
+    /^<p class="ws-lvl" data-level="[1-9]">&#160;<\/p>$/.test(
+      blocks[blocks.length - 1],
+    )
+  )
+    blocks.pop();
   return blocks.join("\n");
 }

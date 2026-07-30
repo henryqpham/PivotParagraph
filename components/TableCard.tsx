@@ -429,7 +429,7 @@ function TableCardInner({
   const placed = useMemo(() => {
     // `k` = the field's index WITHIN its bucket. k === 0 is the level OWNER — the
     // one row that carries the per-level controls (marker / heading / look); a
-    // stacked sibling (k > 0) shows only field controls + a "shares level" note.
+    // stacked sibling (k > 0) shows a blank number pill (same level as its owner).
     const out: { col: number; b: number; fi: number; k: number }[] = [];
     let fi = 0;
     pivotLevels.forEach((bucket, b) =>
@@ -709,14 +709,13 @@ function TableCardInner({
                     )}
                   </p>
                 )}
-                {/* One row per FIELD. The level OWNER (first field of a bucket)
-                    carries the per-level controls (marker / heading / look); a
-                    stacked sibling shows only field controls + a "shares level"
-                    note, so the level-vs-field distinction reads honestly.
-                    Arranged entirely with the ◄ ► ▲ ▼ ✕ buttons (drag-and-drop
-                    was tried and removed — the arrows read as more intuitive and
-                    are keyboard-accessible for free). gap-0 so the tree guides
-                    stay continuous row-to-row. */}
+                {/* One row per FIELD — purely structural (per-LEVEL formatting
+                    lives in the card below). A stacked sibling shows a blank
+                    number pill at its owner's indent; the tree guides carry the
+                    rest. Arranged entirely with the ◄ ► ▲ ▼ ✕ buttons
+                    (drag-and-drop was tried and removed — the arrows read as
+                    more intuitive and are keyboard-accessible for free). gap-0
+                    so the tree guides stay continuous row-to-row. */}
                 <div className="flex flex-col">
                   {placed.map(({ col, b, fi, k }) => {
                     const name = headers[col] || `Column ${col + 1}`;
@@ -837,19 +836,11 @@ function TableCardInner({
                               );
                             })()}
                           </span>
-                          {/* A stacked sibling notes which level it shares. All
-                              per-LEVEL controls (marker / heading / look) live in
-                              the "Level formatting" card below, so this row stays
-                              purely about the FIELD. */}
-                          {!owner && (
-                            <span
-                              className="shrink-0 border-l border-border pl-2 text-[11px] italic text-muted"
-                              title={`Stacked at level ${b + 1} — its marker, heading, and look are set on level ${b + 1} under Level formatting`}
-                            >
-                              shares level {b + 1}
-                            </span>
-                          )}
-                          {/* Actions: outdent / indent / remove (reorder = ⋮ handle) */}
+                          {/* All per-LEVEL controls (marker / heading / look) live
+                              in the "Level formatting" card below — this row stays
+                              purely about the FIELD (the tree guides + blank number
+                              pill already show a stacked sibling's shared level). */}
+                          {/* Actions: outdent / indent / remove */}
                           <span className="flex shrink-0 items-center">
                             <button
                               type="button"
@@ -986,20 +977,9 @@ function TableCardInner({
                   />
                 </>
               )}
+              {/* Blank lines are now a PER-LEVEL toggle — the "Blank line" column
+                  in the matrix below (the old single checkbox was just level 1's). */}
               <label className="ml-1 flex items-center gap-1.5 border-l border-border pl-3 text-xs text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={table.breakAfter[0] === true}
-                  onChange={(e) =>
-                    onChange({ breakAfter: e.target.checked ? [true] : [] })
-                  }
-                  aria-label="Blank line between top-level groups"
-                  title="Add a blank line after each top-level group (this section)"
-                  className="accent-[var(--accent)]"
-                />
-                Blank line between top-level groups
-              </label>
-              <label className="flex items-center gap-1.5 text-xs text-text-secondary">
                 <input
                   type="checkbox"
                   checked={table.pageBreakBefore === true}
@@ -1025,6 +1005,12 @@ function TableCardInner({
                     {table.numbering.mode === "multilevel" ? "Number" : "Marker"}
                   </span>
                 )}
+                <span
+                  className="w-16 shrink-0 text-center"
+                  title="Blank line between this level's groups"
+                >
+                  Blank line
+                </span>
                 <span className="w-20 shrink-0 text-center">Heading</span>
                 <span
                   className="w-24 shrink-0 text-center text-accent-text"
@@ -1155,6 +1141,24 @@ function TableCardInner({
                           )}
                         </div>
                       )}
+                      {/* Blank line after this level's groups — per level, this
+                          section. The renderer already reads breakAfter[depth-1];
+                          the spacer lands BETWEEN sibling groups (never after the
+                          last), so ticking a deep level airs out dense runs. */}
+                      <div className="flex w-16 shrink-0 items-center justify-center">
+                        <input
+                          type="checkbox"
+                          checked={table.breakAfter[i] === true}
+                          onChange={(e) => {
+                            const next = [...table.breakAfter];
+                            next[i] = e.target.checked;
+                            onChange({ breakAfter: next });
+                          }}
+                          aria-label={`Blank line between level ${i + 1} groups`}
+                          title={`Add a blank line between ${label} groups (this section)`}
+                          className="accent-[var(--accent)]"
+                        />
+                      </div>
                       {/* Word heading: checkbox + a rank chip-dropdown. Auto = the
                           contiguous rank (never skipping); picking H1–H9 overrides
                           it. Amber when a manual pick skips a rank. */}

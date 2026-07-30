@@ -98,7 +98,7 @@ export function RenderedPreview({
   // template look only shows on paste; this preview uses the per-level look.
   const FALLBACK = {
     color: "#000000",
-    font: "Arial",
+    font: "Calibri",
     size: 11,
     bold: false,
     italic: false,
@@ -123,7 +123,7 @@ export function RenderedPreview({
   // level chart -- so read it from headingStyle.titleStyle, with italic/underline.
   const t = headingStyle.titleStyle ?? {
     color: "#000000",
-    font: "Arial",
+    font: "Calibri",
     size: 11,
     bold: false,
     italic: false,
@@ -179,7 +179,6 @@ export function RenderedPreview({
         `.ws-preview .ws-title::before{${hangingTag(headingTag(titleN))}}`
       : "");
 
-  const fits = layout.pages <= 1;
   // Measured page-boundary overlays: a dashed rule + "Page N" flag at each usable-
   // band multiple. Absolutely positioned inside the content box (pointer-events
   // none) so they never affect the measured height. Best-effort — see the file
@@ -191,19 +190,10 @@ export function RenderedPreview({
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Fit read-out + honest paste-mode label. */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-0.5 text-xs">
-        <span
-          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-medium ${
-            fits
-              ? "border-[color:color-mix(in_srgb,var(--success)_35%,transparent)] bg-[color:color-mix(in_srgb,var(--success)_12%,transparent)] text-[color:var(--success)]"
-              : "border-[color:color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--warning)_12%,transparent)] text-[color:var(--warning)]"
-          }`}
-          title="Estimated from this preview's layout — Word wraps in the destination font, so the real page break can shift a little."
-        >
-          <span aria-hidden>{fits ? "✓" : "⚠"}</span>
-          {fits ? "Fits 1 page" : `~${layout.pages} pages (estimate)`}
-        </span>
+      {/* Honest paste-mode label. (A page-fit status chip lived beside it and
+          was removed as noise — the ~N-pages stat next to the view tabs and the
+          drawn page boundaries below already answer "does it fit".) */}
+      <div className="flex flex-wrap items-center justify-end gap-2 px-0.5 text-xs">
         <span
           className="text-muted"
           title="The preview shows the look a Keep-Source-Formatting paste produces. A Use-Destination-Styles paste instead adopts your Word template's own Heading styles for mapped headings."

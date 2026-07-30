@@ -16,16 +16,14 @@ import {
   writeRichClipboard,
 } from "@/lib/clipboard";
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
-import { smartArrange } from "@/lib/smartArrange";
 import { loadSession, saveSession, clearSession } from "@/lib/persistence";
+import { buildStylePreset, parseStylePreset } from "@/lib/stylePreset";
 import {
   tableToHtml,
   newTable,
   makeExampleTable,
   estimateSectionStats,
   dropEmptyColumns,
-  bodyGrid,
-  resolveMarkerSpecs,
   DEFAULT_LEVEL,
   type LevelInput,
   type TableState,
@@ -40,10 +38,11 @@ import { CommandPalette, type Command } from "./CommandPalette";
 
 const MAX_TABLES = 100;
 
-// Default TITLE look (its own shared style now — Arial 11 black, matching the old
-// level-1 default; only shows when the Heading dropdown is None).
+// Default TITLE look (its own shared style — Calibri 11 black, matching Excel's
+// default font so the output reads like the source; only shows when the Heading
+// dropdown is None).
 const DEFAULT_TITLE: TitleInput = {
-  font: "Arial",
+  font: "Calibri",
   sizeInput: "11",
   color: "#000000",
   bold: false,
@@ -71,25 +70,6 @@ type CopyNote =
   | { status: "ok"; hasHeading: boolean }
   | { status: "empty" }
   | { status: "error" };
-
-/**
- * A just-pasted section whose headers match an existing arranged section — offered
- * a one-click "reuse that arrangement" (the duplicate-section workflow's root
- * need: same table shape, new month's data).
- */
-type ArrangeHint = { targetId: string; sourceId: string };
-
-/**
- * A grid's effective-header signature: the trimmed, case-insensitive header names
- * in order. Two sections with the same signature are "the same table shape", so
- * one's arrangement (levels/markers/headings/labels/sort) can be reapplied to the
- * other. Order-sensitive on purpose — the arrangement is column-indexed.
- */
-function headerSignature(headerRow: readonly unknown[] | undefined): string {
-  return JSON.stringify(
-    (headerRow ?? []).map((c) => String(c ?? "").trim().toLowerCase()),
-  );
-}
 
 // Full workspace undo/redo history. The oldest step silently drops once the cap is
 // hit; a burst of rapid edits (typing, dragging a color) coalesces into ONE step
@@ -158,12 +138,6 @@ export function PasteInput() {
   // before it commits) and the Ctrl+K command palette.
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
-  // A just-ingested paste that Smart Arrange auto-structured — a dismissible
-  // banner offers "Start blank" (undoable either way). Cleared on the next edit.
-  const [smartHint, setSmartHint] = useState<{
-    tableId: string;
-    levels: number;
-  } | null>(null);
   // Mirrors `showAddModal` into a ref so the window paste listener can bail while
   // the modal owns paste (both listen on window; preventDefault alone wouldn't stop
   // the other from double-ingesting).
@@ -173,9 +147,6 @@ export function PasteInput() {
   }, [showAddModal]);
   // Post-copy confirmation + Word-paste guidance (persists until the next edit).
   const [copyNote, setCopyNote] = useState<CopyNote | null>(null);
-  // A just-pasted section whose headers match an arranged section (offer to reuse
-  // that section's arrangement). Cleared on apply/dismiss or the next paste.
-  const [arrangeHint, setArrangeHint] = useState<ArrangeHint | null>(null);
   // Two-step guard on the destructive "Clear all".
   const [confirmClear, setConfirmClear] = useState(false);
   // Full workspace undo/redo history (session-only, never persisted). Rather than
@@ -207,7 +178,7 @@ export function PasteInput() {
   const [hydrated, setHydrated] = useState(false);
   const idRef = useRef(0);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
+  const presetInputRef = useRef<HTMLInputElement>(null);
   // Latest snapshot + a hydration flag, kept in refs so the tab-hide flush can
   // save synchronously (from an event, without stale closure state) and never
   // overwrite saved work before the initial load has run.
@@ -215,7 +186,7 @@ export function PasteInput() {
   const hydratedRef = useRef(false);
 
   // Document body font (default Arial).
-  const [bodyFont, setBodyFont] = useState<string>("Arial");
+  const [bodyFont, setBodyFont] = useState<string>("Calibri");
   // Per-level BODY styling, shared across tables (the "level chart"). Sparse.
   const [levelStyles, setLevelStyles] = useState<LevelInput[]>([]);
   // Left-indent per nesting level (inches), clamped [0, 2].
@@ -238,7 +209,7 @@ export function PasteInput() {
   const applySnapshot = useCallback((s: SessionSnapshot) => {
     setTables(s.tables);
     setLevelStyles(Array.isArray(s.levelStyles) ? s.levelStyles : []);
-    setBodyFont(s.bodyFont ?? "Arial");
+    setBodyFont(s.bodyFont ?? "Calibri");
     setIndentInput(s.indentInput ?? "0.2");
     setHeadingStyleName(s.headingStyleName ?? "Heading 1");
     setTitleInput(s.titleInput ?? DEFAULT_TITLE);
@@ -416,9 +387,6 @@ export function PasteInput() {
     // A stale paste-error banner is no longer relevant once the user does anything
     // else, so clear it here too (mirrors how the copy note is cleared on edit).
     setError(null);
-    // The Smart Arrange "auto-arranged / start blank" banner is a one-shot nudge
-    // for the just-pasted table; any subsequent edit dismisses it.
-    setSmartHint(null);
     // NOTE: undo/redo history is NOT touched here — it's driven by the snapshot
     // observer below, so ordinary edits ADD to history rather than clearing it.
   }
@@ -537,38 +505,16 @@ export function PasteInput() {
     // Strip fully-empty spacer/padding columns on the way in so they never clutter
     // the Add-fields pool (automatic, no UI).
     const cleaned = dropEmptyColumns(grid);
-    // Same table shape as an already-arranged section (matching effective header
-    // names)? Offer to reuse its arrangement instead of rebuilding it by hand.
-    const sig = cleaned[0]?.length ? headerSignature(cleaned[0]) : null;
-    const src = sig
-      ? tables.find(
-          (t) =>
-            t.pivotLevels.length > 0 && headerSignature(bodyGrid(t)[0]) === sig,
-        )
-      : undefined;
-    // Precedence: an exact-header REUSE match wins (offer that banner, auto-arrange
-    // nothing). Otherwise let Smart Arrange PROPOSE a nested structure from the
-    // column shapes, so the paste lands already-outlined instead of on a blank
-    // canvas — undoable, with a "Start blank" escape hatch in the banner.
-    let table = newTable(id, cleaned);
-    let arrangedLevels = 0;
-    if (!src) {
-      const proposal = smartArrange(cleaned);
-      if (proposal && proposal.levels.length > 0) {
-        table = { ...table, pivotLevels: proposal.levels };
-        arrangedLevels = proposal.levels.length;
-      }
-    }
-    setTables((prev) => [...prev, table]);
+    // A new section always lands BLANK (pivotLevels: []) — building the outline by
+    // adding fields one at a time is the deliberate flow. (Two assists were tried
+    // here and removed on feedback: an auto-arrange heuristic that pre-placed
+    // every column, and a header-match "reuse that arrangement" banner. The
+    // STYLE PRESET covers the recurring-report need now — replay the formatting,
+    // rebuild the structure.)
+    setTables((prev) => [...prev, newTable(id, cleaned)]);
     setActiveId(id);
     setError(null);
-    setArrangeHint(src ? { targetId: id, sourceId: src.id } : null);
-    setSmartHint(arrangedLevels > 0 ? { tableId: id, levels: arrangedLevels } : null);
-    setStatus(
-      arrangedLevels > 0
-        ? `Added section ${tables.length + 1} — auto-arranged into ${arrangedLevels} levels.`
-        : `Added section ${tables.length + 1}.`,
-    );
+    setStatus(`Added section ${tables.length + 1}.`);
     return true;
   }
 
@@ -771,61 +717,87 @@ export function PasteInput() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  // ---- Workspace backup: export/import the whole session as a local .json file.
-  //      No backend — this is the client-side answer to "don't lose my work" /
-  //      "what if I clear my browser data". ----------------------------------
-  function exportWorkspace() {
-    const payload = {
-      app: "pivotparagraph",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      data: snapshot,
-    };
+  // ---- Style preset: export/import the FORMATTING only (the "parser config").
+  //      Everything in it is global or LEVEL-keyed — never column-keyed — so a
+  //      preset saved from this week's report replays on next week's completely
+  //      different table. Import applies the globals plus every section's
+  //      level-keyed settings (all sections, per the user's chosen scope); it
+  //      never touches grids, structure (pivotLevels), titles, or per-column
+  //      label/sort settings. ------------------------------------------------
+  function exportStylePreset() {
+    const payload = buildStylePreset(
+      {
+        levelStyles,
+        titleInput,
+        headingStyleName,
+        bodyFont,
+        indentInput,
+        labelSep,
+        lineSpacing,
+      },
+      activeTable,
+    );
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `pivotparagraph-workspace-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `pivotparagraph-style-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
     setShowDoc(false);
   }
 
-  function handleImportFile(e: ChangeEvent<HTMLInputElement>) {
+  function handlePresetFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file to re-trigger onChange
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result));
-        // Accept our own {app, version, data} export envelope OR a bare
-        // SessionSnapshot, so a raw exported/loadSession-style blob still imports.
-        const data =
-          parsed && typeof parsed === "object" && "data" in parsed
-            ? (parsed as { data: unknown }).data
-            : parsed;
-        if (
-          !data ||
-          typeof data !== "object" ||
-          !Array.isArray((data as SessionSnapshot).tables)
-        ) {
-          throw new Error("not a workspace backup");
-        }
+        const data = parseStylePreset(JSON.parse(String(reader.result)));
+        if (!data) throw new Error("not a style preset");
         setCopyNote(null);
         setError(null);
         setConfirmClear(false);
-        // Checkpoint any in-flight edit so the import is its own clean undo step;
-        // the observer then records the PRE-import state automatically (applySnapshot
-        // is a normal state change, NOT flagged as an undo/redo apply).
+        // Checkpoint any in-flight edit so the whole preset application is ONE
+        // clean undo step (the snapshot observer records the pre-import state).
         commitPending();
-        applySnapshot(data as SessionSnapshot);
+        // Globals — through the raw setters, with the same allow-list guards the
+        // ⚙ controls use for the two enumerated fields.
+        setLevelStyles(Array.isArray(data.levelStyles) ? data.levelStyles : []);
+        setTitleInput(data.titleInput);
+        setHeadingStyleName(data.headingStyleName);
+        setBodyFont(data.bodyFont);
+        setIndentInput(data.indentInput);
+        if (LABEL_SEPS.some((s) => s.value === data.labelSep))
+          setLabelSep(data.labelSep as string);
+        if (LINE_SPACINGS.some((s) => s.value === data.lineSpacing))
+          setLineSpacing(data.lineSpacing as string);
+        // Level-keyed settings onto EVERY section. structuredClone per table so
+        // sections share no references; `markers: undefined` drops the legacy
+        // fused field (markerSpecs is authoritative).
+        setTables((ts) =>
+          ts.map((t) => ({
+            ...t,
+            ...structuredClone({
+              markerSpecs: data.markerSpecs,
+              numbering: data.numbering,
+              headingLevels: data.headingLevels,
+              headingRanks: data.headingRanks,
+              breakAfter: data.breakAfter,
+              pageBreakBefore: data.pageBreakBefore,
+            }),
+            markers: undefined,
+          })),
+        );
         setShowDoc(false);
-        setStatus("Workspace imported. Undo available (Ctrl+Z).");
+        setStatus(
+          "Style preset applied to all sections. Undo available (Ctrl+Z).",
+        );
       } catch {
-        setError("Couldn't read that file as a workspace backup.");
+        setError("Couldn't read that file as a style preset.");
       }
     };
     reader.onerror = () => setError("Couldn't read that file.");
@@ -857,40 +829,6 @@ export function PasteInput() {
     });
     setActiveId(newId);
     setStatus("Section duplicated.");
-  }
-
-  // Reapply the matching section's arrangement to the just-pasted one: the
-  // column-indexed structure (levels/labels/sort — valid because the header
-  // signatures matched, so the columns line up) plus the per-table settings.
-  // Never the grid, the title, or the header offset (the new paste may not have
-  // the old banner rows); global styles aren't per-table at all. structuredClone
-  // so the two sections share no references. One clean undo step.
-  function applyArrangement() {
-    if (!arrangeHint) return;
-    const src = tables.find((t) => t.id === arrangeHint.sourceId);
-    if (!src || !tables.some((t) => t.id === arrangeHint.targetId)) {
-      setArrangeHint(null);
-      return;
-    }
-    setCopyNote(null);
-    commitPending();
-    const cfg = structuredClone({
-      pivotLevels: src.pivotLevels,
-      // Normalize to split specs so a legacy source migrates on reuse.
-      markerSpecs: resolveMarkerSpecs(src),
-      fieldLabels: src.fieldLabels,
-      sortDirs: src.sortDirs,
-      breakAfter: src.breakAfter,
-      numbering: src.numbering,
-      headingLevels: src.headingLevels,
-      headingRanks: src.headingRanks ?? [],
-      pageBreakBefore: src.pageBreakBefore ?? false,
-    });
-    setTables((ts) =>
-      ts.map((t) => (t.id === arrangeHint.targetId ? { ...t, ...cfg } : t)),
-    );
-    setArrangeHint(null);
-    setStatus("Arrangement applied. Undo available (Ctrl+Z).");
   }
 
   function removeTable(id: string) {
@@ -1067,99 +1005,17 @@ export function PasteInput() {
     </p>
   );
 
-  // One-click reuse of a matching section's arrangement for a just-pasted table.
-  // Rendered with guards (either section may have been removed/undone since the
-  // paste), announced politely, dismissible.
-  const arrangeBanner = (() => {
-    if (!arrangeHint) return null;
-    const srcIdx = tables.findIndex((t) => t.id === arrangeHint.sourceId);
-    const src = srcIdx >= 0 ? tables[srcIdx] : undefined;
-    if (!src || !tables.some((t) => t.id === arrangeHint.targetId)) return null;
-    const name = src.sectionTitle.trim() || `Section ${srcIdx + 1}`;
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="flex items-center gap-3 rounded border border-[color:color-mix(in_srgb,var(--accent)_35%,transparent)] bg-accent-subtle px-4 py-2 text-sm text-foreground"
-      >
-        <span className="min-w-0 flex-1">
-          This table&apos;s headers match <strong>{name}</strong>{" "}— reuse
-          its arrangement (levels, markers, headings, sort)?
-        </span>
-        <button
-          type="button"
-          onClick={applyArrangement}
-          className="h-7 shrink-0 rounded border border-accent px-2.5 text-sm font-semibold text-accent-text transition-colors hover:bg-accent hover:text-accent-fg"
-        >
-          Use arrangement
-        </button>
-        <button
-          type="button"
-          onClick={() => setArrangeHint(null)}
-          aria-label="Dismiss arrangement suggestion"
-          className="shrink-0 leading-none text-muted transition-colors hover:text-foreground"
-        >
-          &times;
-        </button>
-      </div>
-    );
-  })();
-
-  // Smart Arrange nudge: a just-pasted section landed already-nested. Offer a
-  // one-click "Start blank" (undoable either way); guards for the table still
-  // existing (an undo/removal could have taken it away).
-  const smartBanner = (() => {
-    if (!smartHint || !tables.some((t) => t.id === smartHint.tableId)) return null;
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="flex items-center gap-3 rounded border border-[color:color-mix(in_srgb,var(--accent)_35%,transparent)] bg-accent-subtle px-4 py-2 text-sm text-foreground"
-      >
-        <span className="min-w-0 flex-1">
-          <strong>Auto-arranged</strong> into {smartHint.levels} indent level
-          {smartHint.levels === 1 ? "" : "s"} from the columns — drag the rows to
-          adjust, or start over.
-        </span>
-        <button
-          type="button"
-          onClick={startBlankFromHint}
-          className="h-7 shrink-0 rounded border border-accent px-2.5 text-sm font-semibold text-accent-text transition-colors hover:bg-accent hover:text-accent-fg"
-        >
-          Start blank
-        </button>
-        <button
-          type="button"
-          onClick={() => setSmartHint(null)}
-          aria-label="Dismiss auto-arrange notice"
-          className="shrink-0 leading-none text-muted transition-colors hover:text-foreground"
-        >
-          &times;
-        </button>
-      </div>
-    );
-  })();
-
   const notifications =
-    errorBanner || copyBanner || arrangeBanner || smartBanner ? (
+    errorBanner || copyBanner ? (
       <div className="flex flex-col gap-2 px-4 pt-3">
         {errorBanner}
         {copyBanner}
-        {arrangeBanner}
-        {smartBanner}
       </div>
     ) : null;
 
   // Read the mirrored availability state (kept in sync by syncUndoAvail at every
   // history mutation) — NOT the ref, which can't be read during render.
   const { canUndo, canRedo } = undoAvail;
-
-  // Discard a Smart Arrange proposal and start the just-pasted section blank.
-  function startBlankFromHint() {
-    if (!smartHint) return;
-    patchTable(smartHint.tableId, { pivotLevels: [] });
-    setSmartHint(null);
-  }
 
   // The Ctrl+K command palette's vocabulary — every top-level action plus a
   // "Go to section" entry per table. Routes through the existing handlers, so all
@@ -1229,6 +1085,22 @@ export function PasteInput() {
       run: () => setShowDoc(true),
     },
     {
+      id: "preset-export",
+      label: "Export style preset",
+      section: "Edit",
+      hint: "save the formatting as .json",
+      keywords: "config save style levels markers headings download",
+      run: exportStylePreset,
+    },
+    {
+      id: "preset-import",
+      label: "Import style preset…",
+      section: "Edit",
+      hint: "apply saved formatting to all sections",
+      keywords: "config load style levels markers headings apply replay",
+      run: () => presetInputRef.current?.click(),
+    },
+    {
       id: "clear",
       label: "Clear all sections",
       section: "Edit",
@@ -1295,29 +1167,9 @@ export function PasteInput() {
             </button>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            {/* ＋ Add table — the primary intake: opens the paste/drop/example
-                modal that previews before committing. Paste-anywhere still works. */}
-            <button
-              type="button"
-              onClick={() => setShowAddModal(true)}
-              title="Add a table — paste, drop a file, or an example (previewed first)"
-              className={BTN_SUBTLE}
-            >
-              <span aria-hidden className="text-base leading-none">
-                &#65291;
-              </span>{" "}
-              Add table
-            </button>
-            {/* ⌕ Commands — the Ctrl+K launcher, surfaced so it's discoverable. */}
-            <button
-              type="button"
-              onClick={() => setShowPalette(true)}
-              aria-label="Open the command palette"
-              title="Commands (Ctrl+K)"
-              className={`${BTN_SUBTLE} !px-2`}
-            >
-              <span aria-hidden>&#8981;</span>
-            </button>
+            {/* (The Add-table button lives in the Sections rail — sections are
+                made where they live, the layers-panel convention. The command
+                palette is keyboard-only: Ctrl/Cmd+K.) */}
             {/* ⚙ Document — GLOBAL body settings (all tables): body font, indent per
                 nesting level, and reset-levels. Owned here (PasteInput holds the
                 state), opened from a shared Popover. */}
@@ -1408,41 +1260,40 @@ export function PasteInput() {
                   >
                     Reset levels
                   </button>
+                  {/* Style preset — the FORMATTING alone (level looks, markers,
+                      numbering, headings, blank lines, fonts), level-keyed so it
+                      replays on any document. The recurring-report answer for
+                      "same house style, different table every week". */}
                   <div className="flex flex-col gap-1.5 border-t border-border pt-3">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                      Backup
+                      Style preset
                     </span>
                     <div className="flex gap-1.5">
                       <button
                         type="button"
-                        onClick={exportWorkspace}
-                        disabled={tables.length === 0}
-                        title="Download the whole workspace as a .json file"
-                        className="h-8 flex-1 rounded border border-border-strong bg-surface px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent hover:text-accent-text disabled:pointer-events-none disabled:opacity-40"
+                        onClick={exportStylePreset}
+                        title="Save the current formatting (levels, markers, headings, fonts) as a .json preset"
+                        className="h-8 flex-1 rounded border border-border-strong bg-surface px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent hover:text-accent-text"
                       >
                         Export
                       </button>
                       <button
                         type="button"
-                        onClick={() => importInputRef.current?.click()}
-                        title="Restore a previously exported workspace"
+                        onClick={() => presetInputRef.current?.click()}
+                        title="Apply a saved style preset to every section (undoable)"
                         className="h-8 flex-1 rounded border border-border-strong bg-surface px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent hover:text-accent-text"
                       >
                         Import&hellip;
                       </button>
                     </div>
-                    <p className="text-[10.5px] leading-snug text-muted">
-                      Local-only backup — nothing is uploaded. Importing replaces
-                      the current workspace (undoable).
-                    </p>
                   </div>
                 </div>
               </Popover>
               <input
-                ref={importInputRef}
+                ref={presetInputRef}
                 type="file"
                 accept="application/json"
-                onChange={handleImportFile}
+                onChange={handlePresetFile}
                 className="hidden"
                 aria-hidden="true"
                 tabIndex={-1}
@@ -1507,6 +1358,7 @@ export function PasteInput() {
           onRemove={removeTable}
           onReorder={moveTable}
           onDuplicate={duplicateTable}
+          onAdd={() => setShowAddModal(true)}
         />
 
         {/* CENTER: onboarding (empty) or the two command groups */}
@@ -1536,49 +1388,11 @@ export function PasteInput() {
                   ))}
                 </ol>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowAddModal(true)}
-                className="flex min-h-[9rem] flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-border-strong bg-surface-alt p-8 text-center transition-colors hover:border-accent hover:bg-accent-subtle"
-              >
-                <span
-                  aria-hidden
-                  className="text-2xl leading-none text-accent-text"
-                >
-                  &#65291;
-                </span>
-                <span className="text-base font-semibold text-accent-text">
-                  Add a table
-                </span>
-                <span className="text-xs text-muted">
-                  Paste, drop an .xlsx / .csv, or try an example
-                </span>
-              </button>
-              <div className="flex items-center justify-center gap-2 text-xs text-muted">
-                <span>or press</span>
-                <kbd className="rounded border border-border-strong px-1.5 py-0.5 font-mono text-[11px]">
-                  Ctrl
-                </kbd>
-                <span>+</span>
-                <kbd className="rounded border border-border-strong px-1.5 py-0.5 font-mono text-[11px]">
-                  V
-                </kbd>
-                <span>to paste from anywhere</span>
-              </div>
+              {/* No in-body add affordance — the rail's ＋ Add section is THE
+                  entry point (its hint also teaches paste-anywhere). */}
             </div>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => setShowAddModal(true)}
-                title="Add another table (paste, drop a file, or an example)"
-                className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border-strong bg-surface-alt px-4 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:border-accent hover:bg-accent-subtle hover:text-accent-text"
-              >
-                <span aria-hidden className="text-base leading-none">
-                  &#65291;
-                </span>
-                Add another table
-              </button>
               {activeTable && (
                 <TableCard
                   key={activeTable.id}

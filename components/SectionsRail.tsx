@@ -17,6 +17,7 @@ export function SectionsRail({
   onRemove,
   onReorder,
   onDuplicate,
+  onAdd,
 }: {
   tables: TableState[];
   activeId: string | null;
@@ -26,6 +27,9 @@ export function SectionsRail({
   onReorder: (from: number, to: number) => void;
   /** Deep-clone this section right after itself. */
   onDuplicate: (id: string) => void;
+  /** Open the Add-table intake modal. Sections are MADE here — the rail is where
+   *  they live (the layers-panel convention), so their + lives here too. */
+  onAdd: () => void;
 }) {
   // The row currently being dragged, and the row it's hovered over (for the drop
   // indicator). Both are flat indices into `tables`, or null when idle.
@@ -82,6 +86,20 @@ export function SectionsRail({
       <div className="border-b border-border px-2 pb-1.5 pt-1 text-xs font-semibold uppercase tracking-wide text-muted">
         Sections
       </div>
+      {/* The one persistent "add" affordance — pinned under the header so it never
+          scrolls away with a long list. */}
+      <button
+        type="button"
+        onClick={onAdd}
+        title="Add a section — paste, drop a file, or try an example"
+        aria-label="Add a section: paste a table, drop a spreadsheet file, or try an example"
+        className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded border border-dashed border-border-strong px-2 py-1.5 text-sm font-medium text-text-secondary transition-colors hover:border-solid hover:border-accent hover:bg-accent-subtle hover:text-accent-text"
+      >
+        <span aria-hidden className="text-base leading-none">
+          &#65291;
+        </span>
+        Add section
+      </button>
       {showFilter && (
         <div className="relative mt-1.5 px-1">
           <input
@@ -219,8 +237,8 @@ export function SectionsRail({
       </div>
       <p className="mt-2 px-2 text-[11px] leading-snug text-muted">
         {tables.length === 0
-          ? "No sections yet — paste a table to add one."
-          : "Each section is its own document. Paste another table to add one; drag to reorder."}
+          ? "No sections yet — use ＋ Add section, or paste a table from anywhere."
+          : "Each section is its own document. ＋ Add section (or paste anywhere) adds one; drag to reorder."}
       </p>
     </aside>
   );

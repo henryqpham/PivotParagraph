@@ -20,7 +20,7 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:3000>, click **＋ Add table** (or just press **Ctrl/Cmd + V** anywhere with a cell range copied from Excel) — or drop an `.xlsx` / `.csv` file into the modal. A fresh paste is auto-arranged into a starting outline; refine it with the ◄ ► ▲ ▼ buttons. Then **Copy section** (or **Ctrl/Cmd + Enter**) and paste into Word.
+Open <http://localhost:3000>, click **＋ Add section** in the left rail (or just press **Ctrl/Cmd + V** anywhere with a cell range copied from Excel) — or drop an `.xlsx` / `.csv` file into the modal. A fresh paste lands **blank on purpose**: add the fields you want one by one from the pool and arrange them with the ◄ ► ▲ ▼ buttons. Then **Copy section** (or **Ctrl/Cmd + Enter**) and paste into Word.
 
 ## Share it as one file — no hosting
 
@@ -46,14 +46,15 @@ Add fields from the pool, then shape one row per field, drawn with Explorer-styl
 
 Each field name renders as a **live micro-preview in its level's real look**, with a faint sample value from the first data row. Per field: toggle the `Field name:` label off, **bold**/*italic*/underline it (`Aa` `B` `I` `U` — these affect **only** the label, the text before the colon), and **sort** that field's groups (↕ / ↑ / ↓ — numeric *and* text aware, so `2` sorts before `10`).
 
-Depth is capped at **9 levels** (the most Word shows) with a live N/9 chip; a field added past the cap stacks into the deepest level. Fields stacked at one level show together at the same indent and merge when their values match — a stacked sibling shows a muted *"shares level N"* note.
+Depth is capped at **9 levels** (the most Word shows) with a live N/9 chip; a field added past the cap stacks into the deepest level. Fields stacked at one level show together at the same indent and merge when their values match.
 
 ### 3. Level formatting — *per level*
-The **Markers** mode (Off / Custom / Multilevel + a **Start** number) plus **Blank line between top-level groups** and **New page per group**, then one compact row per indent level:
+The **Markers** mode (Off / Custom / Multilevel + a **Start** number) plus **New page per group**, then one compact row per indent level:
 
 | Column | Scope | What it does |
 | ------ | ----- | ------------ |
 | **Marker** | this section | Type (`1` `a` `A` `i` `I` `•` `–` None) × delimiter (`.` `)` None) |
+| **Blank line** | this section | A breathing line after this level's own line, before its nested rows (`1. Index` → blank → `a. Group`) |
 | **Heading** | this section | Map the level to a real Word heading + an Auto/H1–H9 rank chip |
 | **Look** | **all sections** | Color swatch + **Aa▾** popover (font / size / **B** / **I** / **U**) |
 
@@ -61,7 +62,7 @@ The **Markers** mode (Off / Custom / Multilevel + a **Start** number) plus **Bla
 
 ## Preview & copy
 
-The pinned right pane shows the active section on a **true-to-scale US-Letter page** — a proportional 1in margin frame with measured pagination, a green **Fits 1 page** / amber **~N pages** chip, and an honest *"Showing: your Keep-Source look"* label. Page counts are a best-effort **estimate**: Word wraps in your template's font, so a real break can shift a line. A **Table** tab shows the raw pasted grid as it came from Excel.
+The pinned right pane shows the active section on a **true-to-scale US-Letter page** — a proportional 1in margin frame with measured pagination (dashed page boundaries) and an honest *"Showing: your Keep-Source look"* label. Page counts are a best-effort **estimate**: Word wraps in your template's font, so a real break can shift a line. A **Table** tab shows the raw pasted grid as it came from Excel.
 
 **Copy section** writes the active section to the clipboard as its own standalone Word document, then an inline banner reminds you which paste option to pick — *Use Destination Styles* (adopt your document's Heading styles) vs *Keep Source Formatting* (keep the preview look). Avoid *Merge Formatting*: it strips the heading mapping.
 
@@ -69,9 +70,8 @@ The pinned right pane shows the active section on a **true-to-scale US-Letter pa
 
 Each pasted table is a row in the left **Sections rail** — **its own standalone Word document**, not a stacked section. Drag to reorder (or grip ⋮ + ↑/↓), **⧉** to duplicate, ✕ to remove; cap 100.
 
-Paste a table whose **headers match an already-arranged section** and a banner offers to reuse that arrangement in one click — the recurring-report workflow (same shape, new month's data). That takes precedence over Smart Arrange's auto-outline.
 
-Document-wide settings — **Body font**, **Line spacing**, **Label separator**, **Indent/level**, **Reset levels**, and workspace **Export / Import** — live in the **⚙ Document** popover.
+Document-wide settings — **Body font** (default **Calibri**, Excel's own default, so output reads like the source), **Line spacing**, **Label separator**, **Indent/level**, and **Reset levels** — live in the **⚙ Document** popover. It also holds the **Style preset**: export your formatting (level looks, markers, numbering, headings, blank lines, fonts — everything keyed by *level*, never by column) as a `.json`, then import it onto next week's completely different table and every section adopts the house style in one undoable step.
 
 Everything is **undoable** (Ctrl+Z / Ctrl+Y), and the whole workspace **auto-saves to your browser** (local only, nothing uploaded). **Ctrl/Cmd + K** opens a command palette over every action.
 
@@ -98,7 +98,7 @@ main.tsx               Vite entry: mounts the same PasteInput + globals.css
 vite.config.ts         single-file build (IIFE + inlined assets, file://-safe)
 components/
   PasteInput.tsx       app shell (4-pane IDE): ingestGrid (dropEmptyColumns +
-                       arrangement-reuse vs Smart Arrange precedence) + paste-anywhere,
+                       new sections land blank) + paste-anywhere,
                        ＋ Add-table modal, Ctrl+K palette, tables[] + shared styles,
                        localStorage persistence, undo/redo, Copy section
   SectionsRail.tsx     left rail: select / drag-reorder / duplicate (⧉) / remove
@@ -111,14 +111,14 @@ components/
                        indent/outdent/move) + MAX_LEVELS=9 + dropEmptyColumns/
                        bodyGrid + estimateSectionStats + newTable/makeExampleTable
   RenderedPreview.tsx  true-to-scale US-Letter proxy: 1in margins, measured
-                       pagination (ResizeObserver → "Page N" rules + fit chip)
+                       pagination (ResizeObserver → "Page N" rules)
   GridTable.tsx        Table view: the raw pasted grid, as-is
   Popover.tsx          shared dependency-free popover (Document + Look)
 lib/
   types.ts             PivotNode/PivotLine + FieldLabel + raw Grid
   parser.ts            clipboard → Grid (parseClipboard) and file → Grid (parseFile);
                        shared firstSheetToGrid
-  smartArrange.ts      pure heuristic: profile columns → propose pivotLevels
+  stylePreset.ts       style preset build/validate (formatting only, level-keyed)
   mapper.ts            rowsToPivotTree (buckets → PivotNode[], sort post-pass)
   renderers.ts         renderPivotTree (tree → HTML fragment)
   clipboard.ts         buildWordHtml / htmlToPlainText / writeRichClipboard

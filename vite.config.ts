@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { viteSingleFile } from "vite-plugin-singlefile";
 import { fileURLToPath } from "node:url";
+import { appVersion } from "./appVersion";
 
 /**
  * SINGLE-FILE build config (`npm run build:single`) — a SECOND build target that
@@ -50,6 +51,13 @@ function classicScriptForFileProtocol() {
 }
 
 export default defineConfig({
+  // Same build-time version constant the Next config exposes — the component
+  // reads `process.env.NEXT_PUBLIC_APP_VERSION`, and this `define` replaces
+  // that exact expression with the literal string in the bundle (Vite has no
+  // runtime `process`). One badge, two builders, one source (appVersion.ts).
+  define: {
+    "process.env.NEXT_PUBLIC_APP_VERSION": JSON.stringify(appVersion()),
+  },
   plugins: [react(), viteSingleFile(), classicScriptForFileProtocol()],
   resolve: {
     // Mirrors tsconfig's `@/*` -> `./*` path alias so the shared modules import

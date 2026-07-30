@@ -1529,6 +1529,16 @@ export function PasteInput() {
         commands={commands}
         placeholder="Search commands…"
       />
+
+      {/* Version badge — build-time git-derived (appVersion.ts): "1.<commit
+          count>", hash in the tooltip. Fixed bottom-right, out of every pane's
+          flow; identical in the Next and single-file builds. */}
+      <span
+        title={`PivotParagraph version ${process.env.NEXT_PUBLIC_APP_VERSION ?? "dev"} — build-stamped from git`}
+        className="fixed bottom-1.5 right-3 z-30 select-none text-[10px] tabular-nums text-muted/80"
+      >
+        v{(process.env.NEXT_PUBLIC_APP_VERSION ?? "dev").split(" · ")[0]}
+      </span>
     </div>
   );
 }

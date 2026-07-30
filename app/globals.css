@@ -60,9 +60,12 @@
   --color-danger: var(--danger);
 
   /* System fonts only — no webfont download, which keeps the single-file build
-     fully self-contained (a file:// page cannot fetch a font CDN). */
-  --font-sans: "Segoe UI", "Segoe UI Variable", system-ui, -apple-system,
-    "Helvetica Neue", Arial, sans-serif;
+     fully self-contained (a file:// page cannot fetch a font CDN). Aptos leads
+     so the app CHROME matches the content's default font — one typeface from
+     builder to preview to the Word paste (Segoe/system as the fallback chain
+     on machines without Microsoft 365 fonts). */
+  --font-sans: "Aptos", "Segoe UI", "Segoe UI Variable", system-ui,
+    -apple-system, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
 }
 

@@ -20,7 +20,7 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:3000>, click **＋ Add section** in the left rail (or just press **Ctrl/Cmd + V** anywhere with a cell range copied from Excel) — or drop an `.xlsx` / `.csv` file into the modal. A fresh paste lands **blank on purpose**: add the fields you want one by one from the pool and arrange them with the ◄ ► ▲ ▼ buttons. Then **Copy section** (or **Ctrl/Cmd + Enter**) and paste into Word.
+Open <http://localhost:3000>, click **＋ Add section** in the left rail (or just press **Ctrl/Cmd + V** anywhere with a cell range copied from Excel) — or drop an `.xlsx` / `.csv` file into the modal. A fresh paste lands **blank on purpose**: add the fields you want one by one from the pool and arrange them with the ◀ ▶ ▲ ▼ buttons. Then **Copy section** (or **Ctrl/Cmd + Enter**) and paste into Word.
 
 ## Share it as one file — no hosting
 
@@ -38,24 +38,24 @@ That one file contains everything (React, SheetJS, styles, app code) with **zero
 
 Three cards, split by **scope** — that split is the point, so it's always clear what a control will change:
 
-### 1. Section Title
+### 1. Section Definition
 The title text, a **Word heading** dropdown (None / Heading 1–4 / **Custom style…** for any style name in your template, e.g. `TBL_TITLE`), and its **Look** (font / size / color / **B** / **I** / **U**).
 
-### 2. Rows — *per field*
-Add fields from the pool, then shape one row per field, drawn with Explorer-style tree lines (│ ├ └). Arrange with **◄** outdent · **►** indent · **▲ ▼** reorder · **✕** remove — or flip the **Drag to reorder** toggle in the card's top-right for a ⋮ grip per row (off by default; dragging is up/down only, so ◄ ► stay the level controls, and ▲ ▼ hide since the grip replaces them). The row you just changed **briefly highlights** so you don't lose it mid-move.
+### 2. Fields & Title Definition — *per field*
+Add fields from the pool, then shape one row per field, drawn with Explorer-style tree lines (│ ├ └). Arrange with **◀** outdent · **▶** indent · **▲ ▼** reorder · **✕** remove — or flip the **Drag to reorder** toggle in the card's top-right for a ⋮ grip per row (off by default; dragging is up/down only, so ◀ ▶ stay the level controls, and ▲ ▼ hide since the grip replaces them). The row you just changed **briefly highlights** so you don't lose it mid-move.
 
 Per field: toggle the `Field name:` label off, **bold**/*italic*/underline it (`Aa` `B` `I` `U` — these affect **only** the label, the text before the colon), and **sort** that field's groups (↕ / ↑ / ↓ — numeric *and* text aware, so `2` sorts before `10`).
 
 Depth is capped at **9 levels** (the most Word shows) with a live N/9 chip; a field added past the cap stacks into the deepest level. Fields stacked at one level show together at the same indent and merge when their values match.
 
-### 3. Level formatting — *per level*
+### 3. Body Text Definition — *per level*
 The **Markers** mode (Off / Custom / Multilevel + a **Start** number) plus **New page per group**, then one compact row per indent level:
 
 | Column | Scope | What it does |
 | ------ | ----- | ------------ |
 | **Marker** | this section | Type (`1` `a` `A` `i` `I` `•` `–` None) × delimiter (`.` `)` None) |
-| **Blank line** | this section | A breathing line after this level's own line, before its nested rows (`1. Index` → blank → `a. Group`) |
-| **Gap after** | this section | A blank line after each of this level's whole groups (`…8.2 x` → blank → `9 Region`) |
+| **Line break before** | this section | A break after this level's own line, before its nested rows (`1. Index` → break → `a. Group`) |
+| **Line break after** | this section | A break after each of this level's whole groups (`…8.2 x` → break → `9 Region`) |
 | **Heading** | this section | Map the level to a real Word heading + an Auto/H1–H9 rank chip |
 | **Look** | **all sections** | Color swatch + **Aa▾** popover (font / size / **B** / **I** / **U**) |
 

@@ -93,7 +93,7 @@ const MARKER_DELIM_OPTIONS: { value: MarkerDelim; label: string }[] = [
 const CARD =
   "rounded-lg border border-border bg-surface p-4 shadow-[var(--shadow-2)]";
 const GROUP_HEADER =
-  "mb-3 border-b border-border pb-2 text-xs font-semibold uppercase tracking-wide text-muted";
+  "mb-3 border-b border-[color:color-mix(in_srgb,var(--accent)_30%,transparent)] pb-2 text-xs font-semibold uppercase tracking-wide text-accent-text";
 const SUB =
   "mt-4 mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted";
 const FIELD =
@@ -327,7 +327,7 @@ type Props = {
   appearance: AppearanceControls;
   /**
    * Opt-in drag-to-reorder on the Rows list (⚙ Document preference, default
-   * OFF — the ◄ ► ▲ ▼ buttons are the primary path and always work). Dragging is
+   * OFF — the ◀ ▶ ▲ ▼ buttons are the primary path and always work). Dragging is
    * VERTICAL-only by construction: `reorderField` pours the fields back into the
    * fixed indent skeleton, so a drop can never indent/outdent or stack.
    */
@@ -519,7 +519,7 @@ function TableCardInner({
     onChange({ sortDirs: next });
   }
 
-  // Icon button (◄►▲▼✕) — Fluent subtle, now visible (not the old /40).
+  // Icon button (◀▶▲▼✕) — Fluent subtle, now visible (not the old /40).
   const icon =
     "flex h-6 w-6 items-center justify-center rounded text-muted transition-colors hover:bg-surface-alt hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
   // `tgl` (the B/I/U/sort toggle recipe) is now module-level — shared with LookControl.
@@ -532,7 +532,7 @@ function TableCardInner({
             (table header row, Word page headers, the Heading dropdown beside it);
             this group is exactly the section's TITLE: its text, Word-heading
             mapping, and look. */}
-        <h2 className={GROUP_HEADER}>Section Title</h2>
+        <h2 className={GROUP_HEADER}>Section Definition</h2>
         <div className="flex flex-col gap-2.5 text-sm">
           <div className="flex flex-wrap items-center gap-2">
             <span className="w-20 shrink-0 text-xs text-text-secondary">
@@ -627,15 +627,15 @@ function TableCardInner({
              in the separate "Level formatting" card below. ---------------------- */}
       <section className={CARD}>
         {/* Card header with the drag-mode TOGGLE on the right — the preference
-            lives where it acts (hiding it in ⚙ read as weird). Off = the ◄ ► ▲ ▼
+            lives where it acts (hiding it in ⚙ read as weird). Off = the ◀ ▶ ▲ ▼
             buttons; on = a ⋮ grip per row and the ▲ ▼ pair hides (drag replaces
-            exactly that reorder job; ◄ ► stay — a drag is vertical-only). */}
+            exactly that reorder job; ◀ ▶ stay — a drag is vertical-only). */}
         <div className={`${GROUP_HEADER} flex items-center justify-between gap-2`}>
-          <h2>Rows</h2>
+          <h2>Fields &amp; Title Definition</h2>
           <label className="flex cursor-pointer items-center gap-1.5 normal-case tracking-normal">
             <span
               className="text-[11px] font-medium text-text-secondary"
-              title="Reorder rows by dragging their ⋮ grip (up/down only — ◄ ► still change the level). Off = the ▲ ▼ buttons."
+              title="Reorder rows by dragging their ⋮ grip (up/down only — ◀ ▶ still change the level). Off = the ▲ ▼ buttons."
             >
               Drag to reorder
             </span>
@@ -706,7 +706,7 @@ function TableCardInner({
                     onClick={() =>
                       applyMove(col, addField(pivotLevels, col))
                     }
-                    title="Add as a new deepest level, then use ◄ ► ▲ ▼ to place it"
+                    title="Add as a new deepest level, then use ◀ ▶ ▲ ▼ to place it"
                     className="h-7 rounded border border-dashed border-border-strong px-2.5 text-xs text-text-secondary transition-colors hover:border-solid hover:border-accent hover:bg-accent-subtle hover:text-accent-text"
                   >
                     + {headers[col] || `Column ${col + 1}`}
@@ -747,7 +747,7 @@ function TableCardInner({
                       <span>
                         This section has <strong>{pivotLevels.length} levels</strong>,
                         but Word (and this preview) show only <strong>9</strong>
-                        {" "}— levels 10+ collapse onto level 9. Outdent (&#9668;)
+                        {" "}— levels 10+ collapse onto level 9. Outdent (&#x25C0;&#xFE0E;)
                         or remove fields until you&apos;re at 9 or fewer.
                       </span>
                     ) : (
@@ -762,7 +762,7 @@ function TableCardInner({
                 {/* One row per FIELD — purely structural (per-LEVEL formatting
                     lives in the card below). A stacked sibling shows a blank
                     number pill at its owner's indent; the tree guides carry the
-                    rest. Arranged entirely with the ◄ ► ▲ ▼ ✕ buttons
+                    rest. Arranged entirely with the ◀ ▶ ▲ ▼ ✕ buttons
                     (drag-and-drop was tried and removed — the arrows read as
                     more intuitive and are keyboard-accessible for free). gap-0
                     so the tree guides stay continuous row-to-row. */}
@@ -818,7 +818,7 @@ function TableCardInner({
                           )}
                           {/* ⋮ drag grip — only in the opt-in drag mode. Drags
                               reorder VERTICALLY only (reorderField keeps the
-                              indent skeleton); ◄ ► ▲ ▼ keep working regardless. */}
+                              indent skeleton); ◀ ▶ ▲ ▼ keep working regardless. */}
                           {dragRows && (
                             <span
                               draggable
@@ -830,7 +830,7 @@ function TableCardInner({
                               }}
                               onDragEnd={endRowDrag}
                               aria-hidden
-                              title="Drag to reorder (up/down only — use ◄ ► to change level)"
+                              title="Drag to reorder (up/down only — use ◀ ▶ to change level)"
                               className="grid h-6 w-4 shrink-0 cursor-grab place-items-center rounded text-xs leading-none text-muted opacity-40 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
                             >
                               &#8942;
@@ -945,7 +945,10 @@ function TableCardInner({
                               }
                               className={icon}
                             >
-                              ◄
+                              {/* ◀ (U+25C0 + FE0E text-style), the same triangle
+                                  family as ▲▼ — the old ◄ (U+25C4 "pointer")
+                                  rendered smaller/thinner via font fallback. */}
+                              {"◀︎"}
                             </button>
                             <button
                               type="button"
@@ -956,10 +959,10 @@ function TableCardInner({
                               }
                               className={icon}
                             >
-                              ►
+                              {"▶︎"}
                             </button>
                             {/* ▲ ▼ hide in drag mode — the ⋮ grip replaces
-                                exactly this reorder job (◄ ► stay: a drag is
+                                exactly this reorder job (◀ ▶ stay: a drag is
                                 vertical-only, so they remain the level controls). */}
                             {!dragRows && (
                               <>
@@ -1027,7 +1030,7 @@ function TableCardInner({
           per-TABLE, the Look is shared by DEPTH across ALL sections. */}
       {pivotLevels.length > 0 && (
         <section className={CARD}>
-          <h2 className={GROUP_HEADER}>Level formatting</h2>
+          <h2 className={GROUP_HEADER}>Body Text Definition</h2>
           <div className="flex flex-col gap-1 text-sm text-text-secondary">
             {/* Markers mode — governs what the MARKER column below means (it is
                 hidden entirely in "off", and becomes a show/hide number toggle in
@@ -1107,16 +1110,16 @@ function TableCardInner({
                   </span>
                 )}
                 <span
-                  className="w-16 shrink-0 text-center"
-                  title="Blank line right after this level's line, before its nested rows (8 Region / blank / 8.1 …)"
+                  className="w-20 shrink-0 text-center"
+                  title="Line break right after this level's line, before its nested rows (8 Region / break / 8.1 …)"
                 >
-                  Blank line
+                  Line break before
                 </span>
                 <span
-                  className="w-16 shrink-0 text-center"
-                  title="Blank line after each of this level's whole groups, between one group and the next (…8.2 x / blank / 9 Region)"
+                  className="w-20 shrink-0 text-center"
+                  title="Line break after each of this level's whole groups, between one group and the next (…8.2 x / break / 9 Region)"
                 >
-                  Gap after
+                  Line break after
                 </span>
                 <span className="w-20 shrink-0 text-center">Heading</span>
                 <span
@@ -1248,9 +1251,9 @@ function TableCardInner({
                           )}
                         </div>
                       )}
-                      {/* Blank line — right after this level's own line, before
-                          its nested rows (breakAfter[depth-1]). */}
-                      <div className="flex w-16 shrink-0 items-center justify-center">
+                      {/* Line break BEFORE the nested rows — right after this
+                          level's own line (breakAfter[depth-1]). */}
+                      <div className="flex w-20 shrink-0 items-center justify-center">
                         <input
                           type="checkbox"
                           checked={table.breakAfter[i] === true}
@@ -1259,14 +1262,14 @@ function TableCardInner({
                             next[i] = e.target.checked;
                             onChange({ breakAfter: next });
                           }}
-                          aria-label={`Blank line after each level ${i + 1} line, before its nested rows`}
-                          title={`Blank line right after each ${label} line, before its nested rows`}
+                          aria-label={`Line break after each level ${i + 1} line, before its nested rows`}
+                          title={`Line break right after each ${label} line, before its nested rows`}
                           className="accent-[var(--accent)]"
                         />
                       </div>
-                      {/* Gap after — after each of this level's WHOLE groups,
+                      {/* Line break AFTER each of this level's WHOLE groups,
                           separating one group from the next (gapAfter[depth-1]). */}
-                      <div className="flex w-16 shrink-0 items-center justify-center">
+                      <div className="flex w-20 shrink-0 items-center justify-center">
                         <input
                           type="checkbox"
                           checked={table.gapAfter?.[i] === true}
@@ -1275,8 +1278,8 @@ function TableCardInner({
                             next[i] = e.target.checked;
                             onChange({ gapAfter: next });
                           }}
-                          aria-label={`Gap after each level ${i + 1} group`}
-                          title={`Blank line after each whole ${label} group, between one group and the next`}
+                          aria-label={`Line break after each level ${i + 1} group`}
+                          title={`Line break after each whole ${label} group, between one group and the next`}
                           className="accent-[var(--accent)]"
                         />
                       </div>

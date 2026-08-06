@@ -468,6 +468,14 @@ export function renderPivotTree(
         // category also bolds its number (one `<b>` run, survives a Word paste).
         const prefix =
           lead && showLabel && lf.bold ? `<b>${lead}</b>` : lead;
+        // On a hanging node the lead is tagged (`ws-lead`) so the preview and
+        // the clipboard can MEASURE its real rendered width — the hanging
+        // indent equals that width, aligning continuation fields with the
+        // first field's TEXT even when the lead is wide ("1.1.1.1 ").
+        const taggedPrefix =
+          hangs && j === 0 && prefix
+            ? `<span class="ws-lead">${prefix}</span>`
+            : prefix;
         // A heading row's FIRST line carries data-heading so buildWordHtml maps it
         // to the destination "Heading K" style.
         const headingAttr =
@@ -487,7 +495,7 @@ export function renderPivotTree(
         // Per-FIELD line-look override: the whole line (lead included, so the
         // number matches its line) wraps in an inline styled run.
         const lk = fieldLooks[depth - 1]?.[j];
-        const body = `${prefix}${label}${value}`;
+        const body = `${taggedPrefix}${label}${value}`;
         blocks.push(
           `<p class="ws-lvl" data-level="${lvl}"${breakAttr}${headingAttr}${alignAttr}>${
             lk && !isHeading ? wrapFieldLook(body, lk) : body

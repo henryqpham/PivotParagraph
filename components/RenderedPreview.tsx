@@ -66,7 +66,39 @@ export function RenderedPreview({
     const paper = paperRef.current;
     const content = contentRef.current;
     if (!paper || !content) return;
+    // Refine the hanging alignment to the REAL lead width. The static CSS
+    // rules approximate with 0.25in for first paint; here each hang row's
+    // rendered lead (`<span class="ws-lead">`) is measured and the row plus its
+    // data-cont continuation lines get exact margins — mirroring
+    // buildWordHtml's canvas measurement — so a stacked "RATIONALE" sits flush
+    // under "DESCRIPTION" even when the number ("1.1.1.1 ") is wider than the
+    // default hang. Runs inside measure() (before heights are read, so
+    // pagination sees final geometry) and therefore re-applies on every
+    // ResizeObserver tick and after web-font settling — a late font swap or a
+    // zero-width measurement in a hidden pane self-heals on the next tick.
+    const stepIn = headingStyle.indentStep ?? 0.2;
+    const refineHangs = () => {
+      content.querySelectorAll<HTMLElement>("p[data-hang]").forEach((row) => {
+        const lead = row.querySelector<HTMLElement>(".ws-lead");
+        if (!lead) return;
+        const px = lead.getBoundingClientRect().width;
+        if (px <= 0) return; // hidden — keep the CSS approximation for now
+        const w = px.toFixed(1);
+        const baseIn = ((Number(row.dataset.level) || 1) - 1) * stepIn;
+        const margin = `calc(${baseIn.toFixed(2)}in + ${w}px)`;
+        row.style.marginLeft = margin;
+        row.style.textIndent = `-${w}px`;
+        for (let el = row.nextElementSibling; el; el = el.nextElementSibling) {
+          if (el.matches("p[data-cont]"))
+            (el as HTMLElement).style.marginLeft = margin;
+          else if (el.matches("p[data-level]") && el.textContent === " ")
+            continue; // a between-stacked spacer — the group continues past it
+          else break;
+        }
+      });
+    };
     const measure = () => {
+      refineHangs();
       const width = paper.clientWidth;
       const bandPx = width * PAGE_BAND_FRAC;
       const contentH = content.scrollHeight;
@@ -77,11 +109,22 @@ export function RenderedPreview({
           : { pages, bandPx },
       );
     };
+    let disposed = false;
     measure();
+    // Once web fonts settle, measure again: a lead measured against the
+    // fallback font is a few px off after Aptos swaps in.
+    document.fonts?.ready
+      .then(() => {
+        if (!disposed) measure();
+      })
+      .catch(() => {});
     const ro = new ResizeObserver(measure);
     ro.observe(paper);
     ro.observe(content);
-    return () => ro.disconnect();
+    return () => {
+      disposed = true;
+      ro.disconnect();
+    };
   }, [html, headingStyle, bodyFont]);
 
   if (!html) {
@@ -161,10 +204,11 @@ export function RenderedPreview({
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
     ).join("") +
-    // Stacked-node hanging alignment (mirrors buildWordHtml's HANG_IN=0.25in):
-    // hang/cont rows shift right by 0.25in and the hang row's negative
-    // text-indent pulls its number back — so a stacked "Product" aligns with
-    // "Country", not with "1.1". After the base level rules, so margin wins.
+    // Stacked-node hanging alignment, FIRST-PAINT approximation only: 0.25in
+    // until the measure effect above reads each row's real `ws-lead` width and
+    // sets exact inline margins (which win over these rules) — so a stacked
+    // "Product" aligns with "Country", not with "1.1". After the base level
+    // rules, so margin wins.
     Array.from({ length: 9 }, (_, i) => {
       const m = (i * step + 0.25).toFixed(2);
       return (

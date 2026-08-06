@@ -174,6 +174,36 @@ const FALLBACK_TITLE: TitleStyle = {
  * but KEEPS inline direct formatting + inline runs, so the look, tight spacing,
  * and label bold/italic/underline survive and match the live preview.
  */
+/**
+ * Width (in INCHES) of a hang line's lead ("1.1.1.1 " / "a) ") at a given
+ * font/size/weight. In the browser (every real copy runs there) a cached canvas
+ * measures the exact advance width — the same font + pt size Word lays out, so
+ * the hanging indent lands the continuation text flush under the first line's
+ * text. Headless (tests/SSR) falls back to a per-glyph estimate (digits/letters
+ * ~0.52em, space ~0.23em, punctuation ~0.27em).
+ */
+let leadCtx: CanvasRenderingContext2D | null | undefined;
+function measureLeadIn(
+  text: string,
+  font: string,
+  sizePt: number,
+  bold: boolean,
+): number {
+  if (leadCtx === undefined)
+    leadCtx =
+      typeof document !== "undefined"
+        ? (document.createElement("canvas").getContext("2d") ?? null)
+        : null;
+  if (leadCtx) {
+    leadCtx.font = `${bold ? "bold " : ""}${sizePt}pt '${font}', 'Segoe UI', sans-serif`;
+    return leadCtx.measureText(text).width / 96;
+  }
+  let em = 0;
+  for (const ch of text)
+    em += /[0-9A-Za-z\u2022\u2013]/.test(ch) ? 0.52 : ch === " " ? 0.23 : 0.27;
+  return (em * sizePt) / 72;
+}
+
 export function buildWordHtml(
   fragment: string,
   heading: HeadingStyle,
@@ -203,12 +233,15 @@ export function buildWordHtml(
     );
   };
   // Hanging-indent geometry for stacked nodes (see the body-row rewrite): the
-  // node's lines shift right by HANG_IN and line 1's negative text-indent pulls
-  // its number/marker back into the margin — sized to roughly a "1.1 " lead at
-  // 11pt, so continuation fields align with the first field's text.
+  // node's lines shift right by the MEASURED width of line 0's lead and line 0's
+  // negative text-indent pulls the lead back into the margin — a fixed hang
+  // misaligned deep levels, where "1.1.1.1 " is far wider than "1.1 ". The
+  // width is measured per hang row (measureLeadIn) and carried to the row's
+  // data-cont continuation lines below; HANG_IN is only the no-lead fallback.
   const HANG_IN = 0.25;
-  const hangMargin = (n: number) =>
-    `margin-left:${((n - 1) * step + HANG_IN).toFixed(2)}in`;
+  let hangW = HANG_IN;
+  const hangMargin = (n: number, w: number) =>
+    `margin-left:${((n - 1) * step + w).toFixed(3)}in`;
   // The per-level look's bold/italic/underline as nested <b>/<i>/<u> runs (direct
   // character formatting, which a "Use Destination Styles" paste keeps -- unlike a
   // class-level font-weight it would discard). Underline innermost then italic then
@@ -343,17 +376,44 @@ export function buildWordHtml(
           return `<p class="MsoHeading${k}"${style}>${content}</p>`;
         }
         let base = directStyle(i, Number(d));
-        // Stacked-node hanging alignment: the whole node indents one extra
-        // HANG_IN, and the FIRST line pulls its number/marker back into the
-        // margin (negative first-line indent — Word's classic hanging indent),
-        // so continuation fields align with the first field's TEXT, not its
+        // Stacked-node hanging alignment: the whole node indents by the lead's
+        // MEASURED width and the FIRST line pulls the lead back into the margin
+        // (negative first-line indent — Word's classic hanging indent), so
+        // continuation fields align with the first field's TEXT, not its
         // number. All inline direct formatting → survives any paste mode.
-        if (align === ' data-hang="1"')
-          base = `${base.replace(/margin-left:[^;]+/, hangMargin(Number(d)))};text-indent:-${HANG_IN}in`;
-        else if (align === ' data-cont="1"')
-          base = base.replace(/margin-left:[^;]+/, hangMargin(Number(d)));
+        let body = content;
+        if (align === ' data-hang="1"') {
+          // The tagged lead (`ws-lead`, stripped from the output) is measured
+          // in the font it actually renders in: a field-look override's span
+          // wraps the whole line, else the level style. Bold widens ~4%, so the
+          // level look, a bold field look, and a bolded label all count.
+          const leadHtml =
+            /<span class="ws-lead">([\s\S]*?)<\/span>/.exec(content)?.[1] ?? "";
+          const leadText = leadHtml
+            .replace(/<[^>]+>/g, "")
+            .replace(/&#160;/g, "\u00A0")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&amp;/g, "&");
+          const lookStyle =
+            /^(?:<[biu]>)*<span style="([^"]*)"/.exec(content)?.[1] ?? "";
+          const family =
+            /font-family:'([^']+)'/.exec(lookStyle)?.[1] ?? lvl(i).font;
+          const sizePt =
+            Number(/font-size:([\d.]+)pt/.exec(lookStyle)?.[1]) || lvl(i).size;
+          const bold =
+            lvl(i).bold ||
+            /^<b>/.test(content) ||
+            /<span class="ws-lead"><b>/.test(content);
+          hangW = leadText
+            ? Math.min(2, Math.max(0.05, measureLeadIn(leadText, family, sizePt, bold)))
+            : HANG_IN;
+          base = `${base.replace(/margin-left:[^;]+/, hangMargin(Number(d), hangW))};text-indent:-${hangW.toFixed(3)}in`;
+          body = content.replace(/<span class="ws-lead">([\s\S]*?)<\/span>/, "$1");
+        } else if (align === ' data-cont="1"')
+          base = base.replace(/margin-left:[^;]+/, hangMargin(Number(d), hangW));
         const style = pageBreak ? `${base};${pageBreak}` : base;
-        return `<p style="${style}">${wrapLook(i, content)}</p>`;
+        return `<p style="${style}">${wrapLook(i, body)}</p>`;
       },
     );
 

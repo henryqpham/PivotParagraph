@@ -161,6 +161,17 @@ export function RenderedPreview({
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
     ).join("") +
+    // Stacked-node hanging alignment (mirrors buildWordHtml's HANG_IN=0.25in):
+    // hang/cont rows shift right by 0.25in and the hang row's negative
+    // text-indent pulls its number back — so a stacked "Product" aligns with
+    // "Country", not with "1.1". After the base level rules, so margin wins.
+    Array.from({ length: 9 }, (_, i) => {
+      const m = (i * step + 0.25).toFixed(2);
+      return (
+        `.ws-preview [data-level="${i + 1}"][data-cont]{margin-left:${m}in}` +
+        `.ws-preview [data-level="${i + 1}"][data-hang]{margin-left:${m}in;text-indent:-0.25in}`
+      );
+    }).join("") +
     // Heading-mapped rows are ALWAYS bold + non-italic + non-underline (Word
     // owns their look on a mapping paste; the emitted heading rule declares only
     // bold), so neutralize any per-level italic/underline here to keep the

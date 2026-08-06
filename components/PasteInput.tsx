@@ -18,6 +18,7 @@ import {
 import type { HeadingStyle, LevelStyle } from "@/lib/clipboard";
 import { loadSession, saveSession, clearSession } from "@/lib/persistence";
 import {
+  applyFieldSettingsByLevel,
   applyLabelsByLevel,
   buildStylePreset,
   parseStylePreset,
@@ -32,7 +33,7 @@ import {
   type LevelInput,
   type TableState,
 } from "./tableModel";
-import { TableCard, FONTS, type TitleInput } from "./TableCard";
+import { TableCard, type TitleInput } from "./TableCard";
 import { SectionsRail } from "./SectionsRail";
 import { Popover } from "./Popover";
 import { RenderedPreview } from "./RenderedPreview";
@@ -55,17 +56,19 @@ const DEFAULT_TITLE: TitleInput = {
 };
 
 /** The full workspace state we persist to localStorage (all JSON-serializable).
- *  `labelSep` and `lineSpacing` are OPTIONAL so pre-existing sessions/exports
- *  still load (defaults applied on read). */
+ *  Optional fields stay optional so pre-existing sessions/exports still load
+ *  (defaults applied on read); `labelSep`/`bodyFont` are LEGACY leftovers of
+ *  removed document-wide controls, ignored on read. */
 type SessionSnapshot = {
   tables: TableState[];
   levelStyles: LevelInput[];
-  bodyFont: string;
+  /** LEGACY (ignored on read): the removed document-wide body font. */
+  bodyFont?: string;
   indentInput: string;
   headingStyleName: string;
   titleInput: TitleInput;
   activeId: string | null;
-  labelSep?: string;
+  labelSep?: string; // LEGACY (ignored)
   lineSpacing?: string;
   /** UI preference: opt-in drag-to-reorder on the Rows list (default off — the
    *  arrow buttons are the primary path). Persisted, but NOT a history-worthy
@@ -94,25 +97,15 @@ function historyChanged(a: SessionSnapshot, b: SessionSnapshot): boolean {
   return (
     a.tables !== b.tables ||
     a.levelStyles !== b.levelStyles ||
-    a.bodyFont !== b.bodyFont ||
     a.indentInput !== b.indentInput ||
     a.headingStyleName !== b.headingStyleName ||
     a.titleInput !== b.titleInput ||
-    a.labelSep !== b.labelSep ||
     a.lineSpacing !== b.lineSpacing
     // `dragRows` is deliberately absent — a UI preference (like activeId), so
     // toggling it never creates an undo step, though it still persists.
   );
 }
 
-/** Allow-listed `Field name<sep>value` separators (the ⚙ Document control). */
-const LABEL_SEPS = [
-  { value: ": ", label: "Name: Value" },
-  { value: " — ", label: "Name — Value" },
-  { value: " - ", label: "Name - Value" },
-  { value: " ", label: "Name Value (space)" },
-] as const;
-const DEFAULT_LABEL_SEP = ": ";
 
 /** Allow-listed body line-spacing multipliers (the ⚙ Document control). */
 const LINE_SPACINGS = [
@@ -195,8 +188,11 @@ export function PasteInput() {
   const snapshotRef = useRef<SessionSnapshot | null>(null);
   const hydratedRef = useRef(false);
 
-  // Document body font (default Arial).
-  const [bodyFont, setBodyFont] = useState<string>("Aptos");
+  // The one body font every unpinned level inherits. The document-wide font
+  // CONTROL was removed on feedback ("don't need whole document font control")
+  // — the default is Aptos (Microsoft 365's standard) and a level's Look popover
+  // can still pin any allow-listed font per level.
+  const BODY_FONT = "Aptos";
   // Per-level BODY styling, shared across tables (the "level chart"). Sparse.
   const [levelStyles, setLevelStyles] = useState<LevelInput[]>([]);
   // Left-indent per nesting level (inches), clamped [0, 2].
@@ -208,7 +204,6 @@ export function PasteInput() {
   // Shared TITLE look (its own controls in the Section Title group).
   const [titleInput, setTitleInput] = useState<TitleInput>(DEFAULT_TITLE);
   // Document-wide `Field name<sep>value` separator (allow-listed; default ": ").
-  const [labelSep, setLabelSep] = useState<string>(DEFAULT_LABEL_SEP);
   // Document-wide body line spacing as a string multiplier ("1"/"1.15"/"1.5").
   const [lineSpacing, setLineSpacing] = useState<string>(DEFAULT_LINE_SPACING);
   // Opt-in drag-to-reorder for the Rows list (⚙ Document). Arrows are default.
@@ -222,11 +217,9 @@ export function PasteInput() {
   const applySnapshot = useCallback((s: SessionSnapshot) => {
     setTables(s.tables);
     setLevelStyles(Array.isArray(s.levelStyles) ? s.levelStyles : []);
-    setBodyFont(s.bodyFont ?? "Aptos");
     setIndentInput(s.indentInput ?? "0.2");
     setHeadingStyleName(s.headingStyleName ?? "");
     setTitleInput(s.titleInput ?? DEFAULT_TITLE);
-    setLabelSep(s.labelSep ?? DEFAULT_LABEL_SEP);
     setLineSpacing(s.lineSpacing ?? DEFAULT_LINE_SPACING);
     setDragRows(s.dragRows === true);
     const restoredActive =
@@ -271,24 +264,20 @@ export function PasteInput() {
     () => ({
       tables,
       levelStyles,
-      bodyFont,
       indentInput,
       headingStyleName,
       titleInput,
       activeId,
-      labelSep,
       lineSpacing,
       dragRows,
     }),
     [
       tables,
       levelStyles,
-      bodyFont,
       indentInput,
       headingStyleName,
       titleInput,
       activeId,
-      labelSep,
       lineSpacing,
       dragRows,
     ],
@@ -427,7 +416,7 @@ export function PasteInput() {
         // the ⚙ Document Body font control actually drive the body rows (both
         // the preview rules and the pasted inline styles read these levels); a
         // level's Look popover pins a specific font by setting a non-empty one.
-        font: ls?.font || bodyFont,
+        font: ls?.font || BODY_FONT,
         size: clampPt(
           ls?.sizeInput ?? DEFAULT_LEVEL.sizeInput,
           parseInt(DEFAULT_LEVEL.sizeInput, 10),
@@ -463,7 +452,6 @@ export function PasteInput() {
     indentInput,
     headingStyleName,
     titleInput,
-    bodyFont,
     lineSpacing,
   ]);
 
@@ -484,15 +472,6 @@ export function PasteInput() {
   function changeHeadingStyleName(v: string) {
     noteEdit();
     setHeadingStyleName(v);
-  }
-  function changeBodyFont(v: string) {
-    noteEdit();
-    setBodyFont(v);
-  }
-  function changeLabelSep(v: string) {
-    noteEdit();
-    // Allow-list: silently ignore anything outside the offered separators.
-    if (LABEL_SEPS.some((s) => s.value === v)) setLabelSep(v);
   }
   function changeLineSpacing(v: string) {
     noteEdit();
@@ -746,9 +725,7 @@ export function PasteInput() {
         levelStyles,
         titleInput,
         headingStyleName,
-        bodyFont,
         indentInput,
-        labelSep,
         lineSpacing,
       },
       activeTable,
@@ -785,10 +762,7 @@ export function PasteInput() {
         setLevelStyles(Array.isArray(data.levelStyles) ? data.levelStyles : []);
         setTitleInput(data.titleInput);
         setHeadingStyleName(data.headingStyleName);
-        setBodyFont(data.bodyFont);
         setIndentInput(data.indentInput);
-        if (LABEL_SEPS.some((s) => s.value === data.labelSep))
-          setLabelSep(data.labelSep as string);
         if (LINE_SPACINGS.some((s) => s.value === data.lineSpacing))
           setLineSpacing(data.lineSpacing as string);
         // Level-keyed settings onto EVERY section. structuredClone per table so
@@ -808,6 +782,12 @@ export function PasteInput() {
               gapAfter: data.gapAfter,
               pageBreakBefore: data.pageBreakBefore,
               fieldLabels: applyLabelsByLevel(t, data.labelsByLevel),
+              ...applyFieldSettingsByLevel(
+                t,
+                data.sepsByLevel,
+                data.looksByLevel,
+                data.breaksByLevel,
+              ),
             }),
             markers: undefined,
           })),
@@ -895,7 +875,7 @@ export function PasteInput() {
   async function copySection() {
     if (!activeTable) return;
     const titleLvl = headingLevel(headingStyleName);
-    const html = tableToHtml(activeTable, titleLvl, labelSep);
+    const html = tableToHtml(activeTable, titleLvl);
     if (html === "") {
       setCopyNote({ status: "empty" });
       return;
@@ -905,7 +885,7 @@ export function PasteInput() {
     // refused — notably the single-file build opened straight from disk
     // (origin `null`, not a secure context).
     const ok = await writeRichClipboard(
-      buildWordHtml(html, headingStyle, bodyFont),
+      buildWordHtml(html, headingStyle, BODY_FONT),
       htmlToPlainText(html),
     );
     if (!ok) {
@@ -936,8 +916,8 @@ export function PasteInput() {
   // pane preview and (recomputed identically in copySection) the copy, so the two
   // can't drift.
   const activeHtml = useMemo(
-    () => (activeTable ? tableToHtml(activeTable, titleLevel, labelSep) : ""),
-    [activeTable, titleLevel, labelSep],
+    () => (activeTable ? tableToHtml(activeTable, titleLevel) : ""),
+    [activeTable, titleLevel],
   );
   // Rows/levels/rough-page-count readout for the active section — a quick at-a-
   // glance answer to "does this still fit a page," shown next to the preview tabs.
@@ -1212,21 +1192,10 @@ export function PasteInput() {
                       All tables
                     </span>
                   </div>
-                  <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
-                    Body font
-                    <select
-                      value={bodyFont}
-                      onChange={(e) => changeBodyFont(e.target.value)}
-                      aria-label="Document body font"
-                      className={FIELD}
-                    >
-                      {FONTS.map((f) => (
-                        <option key={f} value={f}>
-                          {f}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {/* (The document-wide Body font + Label separator controls
+                      were removed on feedback — the font is Aptos with per-level
+                      pins in each Look popover, and label separators are now
+                      per-level free text in the Body Text Definition matrix.) */}
                   <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
                     Line spacing
                     <select
@@ -1236,22 +1205,6 @@ export function PasteInput() {
                       className={FIELD}
                     >
                       {LINE_SPACINGS.map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
-                    Label separator
-                    <select
-                      value={labelSep}
-                      onChange={(e) => changeLabelSep(e.target.value)}
-                      aria-label="Separator between a field label and its value"
-                      title='How "Field name" joins its value on every row'
-                      className={FIELD}
-                    >
-                      {LABEL_SEPS.map((s) => (
                         <option key={s.value} value={s.value}>
                           {s.label}
                         </option>
@@ -1427,7 +1380,7 @@ export function PasteInput() {
                   appearance={{
                     levelStyles,
                     onLevelChange: setLevel,
-                    bodyFont,
+                    bodyFont: BODY_FONT,
                   }}
                 />
               )}
@@ -1498,7 +1451,7 @@ export function PasteInput() {
               <RenderedPreview
                 html={activeHtml}
                 headingStyle={headingStyle}
-                bodyFont={bodyFont}
+                bodyFont={BODY_FONT}
                 emptyHint="Add fields in the center to build the outline. Stack fields at one indent level to show them together (like an Excel pivot's Row Labels)."
               />
             )}

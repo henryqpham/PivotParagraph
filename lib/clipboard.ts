@@ -202,6 +202,13 @@ export function buildWordHtml(
       `color:${s.color};font-family:'${s.font}';font-size:${s.size}pt`
     );
   };
+  // Hanging-indent geometry for stacked nodes (see the body-row rewrite): the
+  // node's lines shift right by HANG_IN and line 1's negative text-indent pulls
+  // its number/marker back into the margin — sized to roughly a "1.1 " lead at
+  // 11pt, so continuation fields align with the first field's text.
+  const HANG_IN = 0.25;
+  const hangMargin = (n: number) =>
+    `margin-left:${((n - 1) * step + HANG_IN).toFixed(2)}in`;
   // The per-level look's bold/italic/underline as nested <b>/<i>/<u> runs (direct
   // character formatting, which a "Use Destination Styles" paste keeps -- unlike a
   // class-level font-weight it would discard). Underline innermost then italic then
@@ -309,12 +316,13 @@ export function buildWordHtml(
     // paragraph (nbsp, data-level only) passes through the else branch as an
     // ordinary inline body paragraph.
     .replace(
-      /<p class="ws-lvl" data-level="([1-9])"( data-break="1")?(?: data-heading="([1-9])")?>([\s\S]*?)<\/p>/g,
+      /<p class="ws-lvl" data-level="([1-9])"( data-break="1")?(?: data-heading="([1-9])")?( data-hang="1"| data-cont="1")?>([\s\S]*?)<\/p>/g,
       (
         _m,
         d: string,
         brk: string | undefined,
         h: string | undefined,
+        align: string | undefined,
         content: string,
       ) => {
         const pageBreak = brk ? "page-break-before:always" : "";
@@ -334,7 +342,16 @@ export function buildWordHtml(
           if (!classHeadings.has(k)) classHeadings.set(k, look);
           return `<p class="MsoHeading${k}"${style}>${content}</p>`;
         }
-        const base = directStyle(i, Number(d));
+        let base = directStyle(i, Number(d));
+        // Stacked-node hanging alignment: the whole node indents one extra
+        // HANG_IN, and the FIRST line pulls its number/marker back into the
+        // margin (negative first-line indent — Word's classic hanging indent),
+        // so continuation fields align with the first field's TEXT, not its
+        // number. All inline direct formatting → survives any paste mode.
+        if (align === ' data-hang="1"')
+          base = `${base.replace(/margin-left:[^;]+/, hangMargin(Number(d)))};text-indent:-${HANG_IN}in`;
+        else if (align === ' data-cont="1"')
+          base = base.replace(/margin-left:[^;]+/, hangMargin(Number(d)));
         const style = pageBreak ? `${base};${pageBreak}` : base;
         return `<p style="${style}">${wrapLook(i, content)}</p>`;
       },

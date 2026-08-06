@@ -6,6 +6,7 @@ import { rowsToPivotTree } from "@/lib/mapper";
 import {
   DEFAULT_NUMBERING,
   renderPivotTree,
+  type FieldLook,
   type MarkerKind,
   type MarkerSpec,
   type NumberingConfig,
@@ -49,20 +50,48 @@ export type TableState = {
    */
   sortDirs: Record<number, "asc" | "desc">;
   /**
-   * "Blank line" toggle per indent level (index = level − 1, like `markers`).
-   * When on, the renderer pushes one empty spacer paragraph right after that
-   * level's OWN line, before its nested children ("8 Region / blank / 8.1 …").
-   * Sparse/short → off.
+   * "Line break before" toggle per indent level (index = level − 1, like
+   * `markers`). When on, the renderer pushes one empty spacer paragraph right
+   * BEFORE that level's line(s) — positional semantics; the field NAME is
+   * historical (it originally meant after-own-line, which proved
+   * indistinguishable from `gapAfter` on leaf levels). Sparse/short → off.
    */
   breakAfter: boolean[];
   /**
-   * "Gap after" toggle per indent level (index = level − 1). When on, the
-   * renderer pushes one empty spacer paragraph after that level's WHOLE
-   * node-subtree, between one group and the next ("…8.2 x / blank / 9 Region").
-   * The between-groups counterpart of `breakAfter`'s within-group blank; the
-   * two compose. Optional so older sessions/imports stay compatible.
+   * "Line break after" toggle per indent level (index = level − 1). When on,
+   * the renderer pushes one empty spacer paragraph after that level's WHOLE
+   * node-subtree ("…8.2 x / blank / 9 Region") — every group, including a sole
+   * child (a renderer post-pass collapses doubled blanks and trims the document
+   * edges). Optional so older sessions/imports stay compatible.
    */
   gapAfter?: boolean[];
+  /**
+   * LEGACY per-LEVEL `Field name<sep>value` label separator (index = level − 1).
+   * Superseded by the per-FIELD `labelSepByCol` (read as its fallback in
+   * `tableToHtml`); kept so sessions from the brief per-level era still render.
+   */
+  labelSeps?: string[];
+  /**
+   * Per-FIELD label separator, keyed by grid column (like `fieldLabels`, so it
+   * survives remove/re-add) — a FREE string (": " "; " " — " …, ≤20 chars;
+   * escaped by the renderer). Absent col → the level's legacy `labelSeps` entry,
+   * else ": ". Each stacked field can separate its label differently.
+   */
+  labelSepByCol?: Record<number, string>;
+  /**
+   * Per-FIELD "blank line before this stacked field" flag, keyed by grid
+   * column. Only meaningful for a field stacked at slot ≥2 of its bucket (the
+   * group's own Line-break-before covers the first line); puts a spacer inside
+   * the group, between stacked lines. Absent → off.
+   */
+  fieldBreakBefore?: Record<number, boolean>;
+  /**
+   * Per-FIELD line-look override, keyed by grid column: when set, that field's
+   * WHOLE line (number/label/value) renders in this look via an inline styled
+   * run (this section only), instead of the level's shared global-by-depth
+   * look. `font: ""` = inherit the level font. Absent col → no override.
+   */
+  fieldLooks?: Record<number, LevelInput>;
   /**
    * App-drawn static multilevel numbering for this table (off by default). When
    * on, the renderer prefixes each node's first line with its compounded number
@@ -382,26 +411,26 @@ export function makeExampleTable(id: string): TableState {
 export function migrateMarkerKind(k: MarkerKind): MarkerSpec {
   switch (k) {
     case "decimal":
-      return { type: "decimal", delim: "dot" };
+      return { type: "decimal", delim: "." };
     case "paren":
-      return { type: "decimal", delim: "paren" };
+      return { type: "decimal", delim: ")" };
     case "upperAlpha":
-      return { type: "upperAlpha", delim: "dot" };
+      return { type: "upperAlpha", delim: "." };
     case "lowerAlpha":
-      return { type: "lowerAlpha", delim: "dot" };
+      return { type: "lowerAlpha", delim: "." };
     case "upperRoman":
-      return { type: "upperRoman", delim: "dot" };
+      return { type: "upperRoman", delim: "." };
     case "lowerRoman":
-      return { type: "lowerRoman", delim: "dot" };
-    // Symbol/none types ignore the delimiter, but default it to "dot" (like a
+      return { type: "lowerRoman", delim: "." };
+    // Symbol/none types ignore the delimiter, but default it to "." (like a
     // fresh level) so switching the Type dropdown to a counter yields "1." not
     // a bare "1".
     case "bullet":
-      return { type: "bullet", delim: "dot" };
+      return { type: "bullet", delim: "." };
     case "dash":
-      return { type: "dash", delim: "dot" };
+      return { type: "dash", delim: "." };
     case "none":
-      return { type: "none", delim: "dot" };
+      return { type: "none", delim: "." };
   }
 }
 
@@ -415,7 +444,16 @@ export function resolveMarkerSpecs(t: TableState): MarkerSpec[] {
   // An EMPTY markerSpecs is "nothing set yet" (newTable writes `[]`), so fall
   // through to any legacy `markers` rather than treating `[]` as authoritative
   // and silently dropping a co-present legacy array (an import edge case).
-  if (t.markerSpecs && t.markerSpecs.length > 0) return t.markerSpecs;
+  // Delims were once the closed tokens "dot"/"paren"/"none"; map those to their
+  // literal strings so pre-free-string sessions render unchanged. Any other
+  // string is already a literal.
+  const LEGACY_DELIMS: Record<string, string> = { dot: ".", paren: ")", none: "" };
+  if (t.markerSpecs && t.markerSpecs.length > 0)
+    return t.markerSpecs.map((sp) =>
+      sp && sp.delim in LEGACY_DELIMS
+        ? { ...sp, delim: LEGACY_DELIMS[sp.delim] }
+        : sp,
+    );
   return (t.markers ?? []).map((k) =>
     k ? migrateMarkerKind(k) : (undefined as unknown as MarkerSpec),
   );
@@ -434,13 +472,34 @@ export function resolveMarkerSpecs(t: TableState): MarkerSpec[] {
  * none) sets the body heading offset, so callers pass it from the shared style via
  * `headingLevel(headingStyleName)`.
  */
-export function tableToHtml(
-  t: TableState,
-  titleLevel = 0,
-  labelSep = ": ",
-): string {
+export function tableToHtml(t: TableState, titleLevel = 0): string {
   const tree = rowsToPivotTree(bodyGrid(t), t.pivotLevels, t.sortDirs ?? {});
   if (tree.length === 0) return "";
+  // Project the column-keyed per-field settings onto [level][stack-slot], the
+  // shape the renderer walks. Separator fallback: per-field -> the level's
+  // legacy per-level entry -> ": ". A look override converts UI inputs to the
+  // renderer's FieldLook (sizeInput string -> clamped pt).
+  const seps = t.pivotLevels.map((bucket, i) =>
+    bucket.map((col) => t.labelSepByCol?.[col] ?? t.labelSeps?.[i] ?? ": "),
+  );
+  const breakSlots = t.pivotLevels.map((bucket) =>
+    bucket.map((col) => t.fieldBreakBefore?.[col] === true),
+  );
+  const looks = t.pivotLevels.map((bucket) =>
+    bucket.map((col): FieldLook | undefined => {
+      const lk = t.fieldLooks?.[col];
+      if (!lk) return undefined;
+      const size = parseInt(lk.sizeInput, 10);
+      return {
+        font: lk.font,
+        sizePt: Number.isFinite(size) ? size : 11,
+        color: lk.color,
+        bold: lk.bold,
+        italic: lk.italic ?? false,
+        underline: lk.underline ?? false,
+      };
+    }),
+  );
   return renderPivotTree(
     tree,
     t.sectionTitle.trim() || undefined,
@@ -452,8 +511,10 @@ export function tableToHtml(
     titleLevel,
     t.pageBreakBefore ?? false,
     t.headingRanks ?? [],
-    labelSep,
+    seps,
     t.gapAfter ?? [],
+    looks,
+    breakSlots,
   );
 }
 

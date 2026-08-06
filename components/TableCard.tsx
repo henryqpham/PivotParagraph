@@ -13,7 +13,6 @@ import {
   defaultMarkerSpec,
   isCounterType,
   type MarkerType,
-  type MarkerDelim,
 } from "@/lib/renderers";
 import { DEFAULT_FIELD_LABEL, type FieldLabel } from "@/lib/types";
 import { Popover } from "./Popover";
@@ -80,15 +79,6 @@ const MARKER_TYPE_OPTIONS: { value: MarkerType; label: string }[] = [
   { value: "dash", label: "–" },
   { value: "none", label: "None" },
 ];
-/** Marker DELIMITER glued after a counter (disabled for symbol/none types).
- *  "None" is spelled out rather than drawn as an em-dash: a "—" glyph reads like a
- *  dash you'd GET after the number, when it actually means no delimiter at all. */
-const MARKER_DELIM_OPTIONS: { value: MarkerDelim; label: string }[] = [
-  { value: "dot", label: "." },
-  { value: "paren", label: ")" },
-  { value: "none", label: "None" },
-];
-
 // ---- Fluent control recipes (shared) --------------------------------------
 const CARD =
   "rounded-lg border border-border bg-surface p-4 shadow-[var(--shadow-2)]";
@@ -133,6 +123,7 @@ function LookControl({
   onOpenChange,
   label,
   bodyFontOption,
+  scope = "all tables",
 }: {
   value: LookValue;
   onChange: (patch: Partial<LookValue>) => void;
@@ -140,6 +131,9 @@ function LookControl({
   onOpenChange: (open: boolean) => void;
   label: string;
   bodyFontOption?: string;
+  /** Scope badge/tooltips: "all tables" (level/title looks) or "this section"
+   *  (a per-field override). */
+  scope?: string;
 }) {
   return (
     <div className="relative flex items-center gap-1">
@@ -147,16 +141,16 @@ function LookControl({
         type="color"
         value={value.color}
         onChange={(e) => onChange({ color: e.target.value })}
-        aria-label={`${label} text color (all tables)`}
-        title="Text color · all tables"
+        aria-label={`${label} text color (${scope})`}
+        title={`Text color · ${scope}`}
         className="h-6 w-6 cursor-pointer rounded border border-border-strong"
       />
       <button
         type="button"
         onClick={() => onOpenChange(!open)}
         aria-expanded={open}
-        aria-label={`${label} font, size, and emphasis (all tables)`}
-        title="Font · size · bold · italic · underline · all tables"
+        aria-label={`${label} font, size, and emphasis (${scope})`}
+        title={`Font · size · bold · italic · underline · ${scope}`}
         className="rounded border border-border-strong bg-surface px-1 text-[11px] font-semibold text-text-secondary transition-colors hover:border-accent hover:text-accent-text"
       >
         Aa▾
@@ -166,7 +160,7 @@ function LookControl({
           <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
             {label} look
             <span className="ml-1 font-normal normal-case text-accent-text">
-              · all tables
+              · {scope}
             </span>
           </div>
           <label className="flex items-center justify-between gap-3">
@@ -409,7 +403,7 @@ function TableCardInner({
   // fused `markers`. Patch one level's type or delimiter and write the whole
   // (normalized) array back so a legacy source is upgraded on first edit.
   const markerSpecs = resolveMarkerSpecs(table);
-  const setMarkerSpec = (i: number, patch: Partial<{ type: MarkerType; delim: MarkerDelim }>) => {
+  const setMarkerSpec = (i: number, patch: Partial<{ type: MarkerType; delim: string }>) => {
     const next = [...markerSpecs];
     next[i] = { ...(next[i] ?? defaultMarkerSpec(i + 1)), ...patch };
     // Drop any legacy `markers` we just superseded so the table doesn't persist
@@ -507,6 +501,27 @@ function TableCardInner({
     const cur = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
     onChange({
       fieldLabels: { ...table.fieldLabels, [col]: { ...cur, ...patch } },
+    });
+  }
+
+  /** Per-field label separator (any string, <=20 chars), keyed by column. */
+  function patchLabelSep(col: number, v: string) {
+    onChange({
+      labelSepByCol: {
+        ...(table.labelSepByCol ?? {}),
+        [col]: v.slice(0, 20),
+      },
+    });
+  }
+
+  /** Per-field line-look override (this section), keyed by column. */
+  function patchFieldLook(col: number, patch: Partial<LevelInput>) {
+    const cur = table.fieldLooks?.[col] ?? DEFAULT_LEVEL;
+    onChange({
+      fieldLooks: {
+        ...(table.fieldLooks ?? {}),
+        [col]: { ...cur, ...patch },
+      },
     });
   }
 
@@ -771,7 +786,6 @@ function TableCardInner({
                     const name = headers[col] || `Column ${col + 1}`;
                     const lf = table.fieldLabels[col] ?? DEFAULT_FIELD_LABEL;
                     const g = guides[fi];
-                    const owner = k === 0;
                     const isDropTarget =
                       overFi === fi && dragFi !== null && dragFi !== fi;
                     // Splice semantics: dragged DOWN lands after the target
@@ -843,15 +857,10 @@ function TableCardInner({
                             ))}
                             <GuideCell kind={g.last ? "corner" : "tee"} />
                           </span>
-                          {/* Level number pill (dim/blank on a stacked sibling) */}
-                          <span
-                            className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] text-[11px] font-semibold tabular-nums ${
-                              owner
-                                ? "bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-muted"
-                                : "text-transparent"
-                            }`}
-                          >
-                            {b + 1}
+                          {/* Level pill: a stacked bucket numbers its members
+                              2.1 / 2.2 …, a single-field level shows plain 2. */}
+                          <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] px-1 text-[11px] font-semibold tabular-nums text-muted">
+                            {pivotLevels[b].length > 1 ? `${b + 1}.${k + 1}` : b + 1}
                           </span>
                           {/* Field name — plain UI text (the styled micro-preview
                               + sample value were removed on feedback; the right
@@ -1110,14 +1119,20 @@ function TableCardInner({
                   </span>
                 )}
                 <span
+                  className="w-16 shrink-0 text-center"
+                  title="The text between a field's label and its value on this level — any string, e.g. ': ' '; ' ' — '"
+                >
+                  Label sep
+                </span>
+                <span
                   className="w-20 shrink-0 text-center"
-                  title="Line break right after this level's line, before its nested rows (8 Region / break / 8.1 …)"
+                  title="Blank line right BEFORE this row's line — on a stacked 2.2 row it separates that field from the one above it inside the group"
                 >
                   Line break before
                 </span>
                 <span
                   className="w-20 shrink-0 text-center"
-                  title="Line break after each of this level's whole groups, between one group and the next (…8.2 x / break / 9 Region)"
+                  title="Blank line AFTER this level's whole group — everything nested under it — before whatever comes next (…8.2 x / break / 9 Region)"
                 >
                   Line break after
                 </span>
@@ -1130,231 +1145,277 @@ function TableCardInner({
                 </span>
               </div>
               <div className="flex flex-col gap-0.5">
-                {pivotLevels.map((bucket, i) => {
-                  const label = headers[bucket[0]] || `Level ${i + 1}`;
-                  // Stacked siblings share this level, so name them here too —
-                  // the row is honestly "level 2 = Country + State", not just the
-                  // bucket's first field.
-                  const stacked = bucket
-                    .slice(1)
-                    .map((c) => headers[c] || `Column ${c + 1}`);
-                  const idx = levelIdxForBucket(i);
-                  const lv = appearance.levelStyles[idx] ?? DEFAULT_LEVEL;
-                  const isHeading = table.headingLevels[i] === true;
-                  const { k: headingK, auto, explicit, skips } = headingInfo[i];
-                  return (
-                    <div
-                      key={i}
-                      className="flex items-center gap-2 rounded p-1 hover:bg-surface-alt"
-                    >
-                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] text-[11px] font-semibold tabular-nums text-muted">
-                        {i + 1}
-                      </span>
-                      <span className="flex min-w-0 flex-1 items-baseline gap-1.5 truncate text-xs">
-                        <span className="truncate text-text-secondary">
-                          {label}
+                {/* One sub-row per FIELD (2.1 / 2.2 … when a level stacks), so
+                    every bucketed field is individually editable. Scope per
+                    cell: Marker / line breaks / Heading are LEVEL-scoped and
+                    live on the level's FIRST sub-row only (blank spacers keep
+                    the grid aligned on siblings); Label sep is PER FIELD; Look
+                    is the LEVEL look (all tables) on the first sub-row and a
+                    PER-FIELD override (this section) on stacked siblings. */}
+                {pivotLevels.flatMap((bucket, i) =>
+                  bucket.map((col, j) => {
+                    const owner = j === 0;
+                    const name = headers[col] || `Column ${col + 1}`;
+                    const idx = levelIdxForBucket(i);
+                    const lv = appearance.levelStyles[idx] ?? DEFAULT_LEVEL;
+                    const isHeading = table.headingLevels[i] === true;
+                    const { k: headingK, auto, explicit, skips } =
+                      headingInfo[i];
+                    return (
+                      <div
+                        key={`${i}-${col}`}
+                        className="flex items-center gap-2 rounded p-1 hover:bg-surface-alt"
+                      >
+                        <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-[color:color-mix(in_srgb,var(--muted)_16%,transparent)] px-1 text-[11px] font-semibold tabular-nums text-muted">
+                          {bucket.length > 1 ? `${i + 1}.${j + 1}` : i + 1}
                         </span>
-                        {stacked.length > 0 && (
-                          <span
-                            className="truncate text-[11px] text-muted"
-                            title={`Level ${i + 1} also holds: ${stacked.join(", ")}`}
-                          >
-                            + {stacked.join(", ")}
-                          </span>
+                        <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                          {name}
+                        </span>
+                        {/* Marker / Number — LEVEL scope, so first sub-row only. */}
+                        {table.numbering.mode !== "off" && (
+                          <div className="w-40 shrink-0">
+                            {!owner ? null : isHeading ? (
+                              <span
+                                className="block truncate text-xs italic text-muted"
+                                title="Word supplies this level's number on paste — the app marker/number is suppressed"
+                              >
+                                Word numbers
+                              </span>
+                            ) : table.numbering.mode === "multilevel" ? (
+                              <label className="flex items-center gap-1.5 text-xs text-text-secondary">
+                                <input
+                                  type="checkbox"
+                                  checked={table.numbering.levels[i] !== false}
+                                  onChange={(e) => {
+                                    const next = [...table.numbering.levels];
+                                    next[i] = e.target.checked;
+                                    onChange({
+                                      numbering: {
+                                        ...table.numbering,
+                                        levels: next,
+                                      },
+                                    });
+                                  }}
+                                  aria-label={`Show the number on level ${i + 1}`}
+                                  className="accent-[var(--accent)]"
+                                />
+                                Show number
+                              </label>
+                            ) : (
+                              (() => {
+                                const spec =
+                                  markerSpecs[i] ?? defaultMarkerSpec(i + 1);
+                                const counter = isCounterType(spec.type);
+                                return (
+                                  <div className="flex items-center gap-1">
+                                    <select
+                                      value={spec.type}
+                                      onChange={(e) =>
+                                        setMarkerSpec(i, {
+                                          type: e.target.value as MarkerType,
+                                        })
+                                      }
+                                      aria-label={`Marker type for level ${i + 1}`}
+                                      className={`${FIELD} min-w-0 flex-1 px-1`}
+                                    >
+                                      {MARKER_TYPE_OPTIONS.map((o) => (
+                                        <option key={o.value} value={o.value}>
+                                          {o.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      type="text"
+                                      value={spec.delim}
+                                      disabled={!counter}
+                                      maxLength={20}
+                                      onChange={(e) =>
+                                        setMarkerSpec(i, {
+                                          delim: e.target.value.slice(0, 20),
+                                        })
+                                      }
+                                      aria-label={`Marker separator for level ${i + 1} (any text)`}
+                                      placeholder="."
+                                      title={
+                                        counter
+                                          ? "Any separator after the number/letter — . ) : ; etc. Leave empty for none"
+                                          : "No separator — this marker is a symbol"
+                                      }
+                                      className={`${FIELD} w-12 px-1 text-center disabled:opacity-40`}
+                                    />
+                                  </div>
+                                );
+                              })()
+                            )}
+                          </div>
                         )}
-                      </span>
-                      {/* Marker cell — hidden in "off": a per-level marker select
-                          in "custom", or a show-number checkbox in "multilevel". */}
-                      {table.numbering.mode !== "off" && (
-                        <div className="w-40 shrink-0">
-                          {isHeading ? (
-                            // A Word-heading level's own marker/number is
-                            // suppressed (Word numbers those rows on paste), so an
-                            // active-looking control here would lie.
-                            <span
-                              className="block truncate text-xs italic text-muted"
-                              title="Word supplies this level's number on paste — the app marker/number is suppressed"
-                            >
-                              Word numbers
-                            </span>
-                          ) : table.numbering.mode === "multilevel" ? (
-                            <label className="flex items-center gap-1.5 text-xs text-text-secondary">
+                        {/* Label separator — PER FIELD (each stacked field can
+                            join its label and value differently). */}
+                        <div className="flex w-16 shrink-0 items-center justify-center">
+                          <input
+                            type="text"
+                            value={
+                              table.labelSepByCol?.[col] ??
+                              table.labelSeps?.[i] ??
+                              ": "
+                            }
+                            maxLength={20}
+                            onChange={(e) => patchLabelSep(col, e.target.value)}
+                            aria-label={`Label separator for ${name} (any text)`}
+                            title={`The text between "${name}" and its value — e.g. ": " "; " " — "`}
+                            className={`${FIELD} w-14 px-1 text-center`}
+                          />
+                        </div>
+                        {/* Line break BEFORE — positional per row: the level's
+                            own break on the first sub-row (blank above the
+                            whole group's line), a PER-FIELD break on stacked
+                            siblings (blank between stacked lines, inside the
+                            group). Same reading either way: "blank above me". */}
+                        <div className="flex w-20 shrink-0 items-center justify-center">
+                          {owner ? (
+                            <input
+                              type="checkbox"
+                              checked={table.breakAfter[i] === true}
+                              onChange={(e) => {
+                                const next = [...table.breakAfter];
+                                next[i] = e.target.checked;
+                                onChange({ breakAfter: next });
+                              }}
+                              aria-label={`Blank line before each level ${i + 1} line`}
+                              title={`Blank line right before each ${name} line`}
+                              className="accent-[var(--accent)]"
+                            />
+                          ) : (
+                            !isHeading && (
                               <input
                                 type="checkbox"
-                                checked={table.numbering.levels[i] !== false}
-                                onChange={(e) => {
-                                  const next = [...table.numbering.levels];
-                                  next[i] = e.target.checked;
+                                checked={
+                                  table.fieldBreakBefore?.[col] === true
+                                }
+                                onChange={(e) =>
                                   onChange({
-                                    numbering: {
-                                      ...table.numbering,
-                                      levels: next,
+                                    fieldBreakBefore: {
+                                      ...table.fieldBreakBefore,
+                                      [col]: e.target.checked,
                                     },
-                                  });
-                                }}
-                                aria-label={`Show the number on level ${i + 1}`}
+                                  })
+                                }
+                                aria-label={`Blank line before the stacked ${name} line, inside its group`}
+                                title={`Blank line before each stacked ${name} line, inside the group`}
                                 className="accent-[var(--accent)]"
                               />
-                              Show number
-                            </label>
-                          ) : (
-                            // Split marker: TYPE (counter/symbol glyph) +
-                            // DELIMITER (glued after a counter; disabled for a
-                            // symbol/none type, which takes no suffix).
-                            (() => {
-                              const spec =
-                                markerSpecs[i] ?? defaultMarkerSpec(i + 1);
-                              const counter = isCounterType(spec.type);
-                              return (
-                                <div className="flex items-center gap-1">
-                                  <select
-                                    value={spec.type}
-                                    onChange={(e) =>
-                                      setMarkerSpec(i, {
-                                        type: e.target.value as MarkerType,
-                                      })
-                                    }
-                                    aria-label={`Marker type for level ${i + 1}`}
-                                    className={`${FIELD} min-w-0 flex-1 px-1`}
-                                  >
-                                    {MARKER_TYPE_OPTIONS.map((o) => (
-                                      <option key={o.value} value={o.value}>
-                                        {o.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <select
-                                    value={spec.delim}
-                                    disabled={!counter}
-                                    onChange={(e) =>
-                                      setMarkerSpec(i, {
-                                        delim: e.target.value as MarkerDelim,
-                                      })
-                                    }
-                                    aria-label={`Marker delimiter for level ${i + 1}`}
-                                    title={
-                                      counter
-                                        ? "Delimiter after the number/letter"
-                                        : "No delimiter — this marker is a symbol"
-                                    }
-                                    className={`${FIELD} w-16 px-1 text-center disabled:opacity-40`}
-                                  >
-                                    {MARKER_DELIM_OPTIONS.map((o) => (
-                                      <option key={o.value} value={o.value}>
-                                        {o.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              );
-                            })()
+                            )
                           )}
                         </div>
-                      )}
-                      {/* Line break BEFORE the nested rows — right after this
-                          level's own line (breakAfter[depth-1]). */}
-                      <div className="flex w-20 shrink-0 items-center justify-center">
-                        <input
-                          type="checkbox"
-                          checked={table.breakAfter[i] === true}
-                          onChange={(e) => {
-                            const next = [...table.breakAfter];
-                            next[i] = e.target.checked;
-                            onChange({ breakAfter: next });
-                          }}
-                          aria-label={`Line break after each level ${i + 1} line, before its nested rows`}
-                          title={`Line break right after each ${label} line, before its nested rows`}
-                          className="accent-[var(--accent)]"
-                        />
+                        {/* Line break AFTER — LEVEL scope, first sub-row only. */}
+                        <div className="flex w-20 shrink-0 items-center justify-center">
+                          {owner && (
+                            <input
+                              type="checkbox"
+                              checked={table.gapAfter?.[i] === true}
+                              onChange={(e) => {
+                                const next = [...(table.gapAfter ?? [])];
+                                next[i] = e.target.checked;
+                                onChange({ gapAfter: next });
+                              }}
+                              aria-label={`Blank line after each level ${i + 1} group`}
+                              title={`Blank line after each whole ${name} group — it and everything nested under it`}
+                              className="accent-[var(--accent)]"
+                            />
+                          )}
+                        </div>
+                        {/* Word heading — LEVEL scope, first sub-row only. */}
+                        <div className="flex w-20 shrink-0 items-center justify-center gap-1">
+                          {owner && (
+                            <>
+                              <input
+                                type="checkbox"
+                                checked={isHeading}
+                                onChange={(e) => {
+                                  const next = [...table.headingLevels];
+                                  next[i] = e.target.checked;
+                                  onChange({ headingLevels: next });
+                                }}
+                                aria-label={
+                                  isHeading
+                                    ? `${name} maps to Word Heading ${headingK} — uncheck to make it body text`
+                                    : `Map ${name} to a Word heading (Navigation pane, collapsible)`
+                                }
+                                title="Map to a Word heading (Navigation pane, collapsible)"
+                                className="accent-[var(--accent)]"
+                              />
+                              <select
+                                value={explicit}
+                                onChange={(e) => {
+                                  const next = [...(table.headingRanks ?? [])];
+                                  next[i] = Number(e.target.value); // 0 = auto
+                                  onChange({ headingRanks: next });
+                                }}
+                                aria-label={`Word heading rank for ${name} (Auto = Heading ${auto})`}
+                                title={
+                                  skips
+                                    ? `Pastes as Word "Heading ${headingK}" — skips a rank (Word flags gapped outlines)`
+                                    : `Pastes as Word "Heading ${headingK}". Auto follows the checked levels above; pick H1–H9 to pin it.`
+                                }
+                                className={`h-6 rounded-sm border px-0.5 text-[10px] font-semibold tabular-nums outline-none transition-colors ${
+                                  isHeading ? "" : "invisible"
+                                } ${
+                                  skips
+                                    ? "border-[color:color-mix(in_srgb,var(--warning)_55%,transparent)] bg-[color:color-mix(in_srgb,var(--warning)_12%,transparent)] text-[color:var(--warning)]"
+                                    : "border-border-strong bg-accent-subtle text-accent-text hover:border-accent"
+                                }`}
+                              >
+                                <optgroup label="Auto (follows levels above)">
+                                  <option value={0}>H{auto}</option>
+                                </optgroup>
+                                <optgroup label="Pin to">
+                                  {Array.from({ length: 9 }, (_, n) => (
+                                    <option key={n + 1} value={n + 1}>
+                                      H{n + 1}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              </select>
+                            </>
+                          )}
+                        </div>
+                        {/* Look — first sub-row edits the LEVEL look (shared by
+                            depth across all tables); a stacked sibling edits its
+                            OWN per-field line look (this section only), so
+                            bucketed fields are individually stylable. */}
+                        <div className="flex w-24 shrink-0 justify-center">
+                          {owner ? (
+                            <LookControl
+                              value={lv}
+                              onChange={(patch) =>
+                                appearance.onLevelChange(idx, patch)
+                              }
+                              open={openPop === `lvl-${i}`}
+                              onOpenChange={(o) =>
+                                setOpenPop(o ? `lvl-${i}` : null)
+                              }
+                              label={name}
+                              bodyFontOption={appearance.bodyFont}
+                            />
+                          ) : (
+                            <LookControl
+                              value={table.fieldLooks?.[col] ?? DEFAULT_LEVEL}
+                              onChange={(patch) => patchFieldLook(col, patch)}
+                              open={openPop === `flook-${col}`}
+                              onOpenChange={(o) =>
+                                setOpenPop(o ? `flook-${col}` : null)
+                              }
+                              label={name}
+                              bodyFontOption={lv.font || appearance.bodyFont}
+                              scope="this section"
+                            />
+                          )}
+                        </div>
                       </div>
-                      {/* Line break AFTER each of this level's WHOLE groups,
-                          separating one group from the next (gapAfter[depth-1]). */}
-                      <div className="flex w-20 shrink-0 items-center justify-center">
-                        <input
-                          type="checkbox"
-                          checked={table.gapAfter?.[i] === true}
-                          onChange={(e) => {
-                            const next = [...(table.gapAfter ?? [])];
-                            next[i] = e.target.checked;
-                            onChange({ gapAfter: next });
-                          }}
-                          aria-label={`Line break after each level ${i + 1} group`}
-                          title={`Line break after each whole ${label} group, between one group and the next`}
-                          className="accent-[var(--accent)]"
-                        />
-                      </div>
-                      {/* Word heading: checkbox + a rank chip-dropdown. Auto = the
-                          contiguous rank (never skipping); picking H1–H9 overrides
-                          it. Amber when a manual pick skips a rank. */}
-                      <div className="flex w-20 shrink-0 items-center justify-center gap-1">
-                        <input
-                          type="checkbox"
-                          checked={isHeading}
-                          onChange={(e) => {
-                            const next = [...table.headingLevels];
-                            next[i] = e.target.checked;
-                            onChange({ headingLevels: next });
-                          }}
-                          aria-label={
-                            isHeading
-                              ? `${label} maps to Word Heading ${headingK} — uncheck to make it body text`
-                              : `Map ${label} to a Word heading (Navigation pane, collapsible)`
-                          }
-                          title="Map to a Word heading (Navigation pane, collapsible)"
-                          className="accent-[var(--accent)]"
-                        />
-                        {/* Rendered always but visibility-hidden when unchecked, so
-                            the column doesn't jump when a box is ticked. */}
-                        <select
-                          value={explicit}
-                          onChange={(e) => {
-                            const next = [...(table.headingRanks ?? [])];
-                            next[i] = Number(e.target.value); // 0 = auto
-                            onChange({ headingRanks: next });
-                          }}
-                          aria-label={`Word heading rank for ${label} (Auto = Heading ${auto})`}
-                          title={
-                            skips
-                              ? `Pastes as Word "Heading ${headingK}" — skips a rank (Word flags gapped outlines)`
-                              : `Pastes as Word "Heading ${headingK}". Auto follows the checked levels above; pick H1–H9 to pin it.`
-                          }
-                          className={`h-6 rounded-sm border px-0.5 text-[10px] font-semibold tabular-nums outline-none transition-colors ${
-                            isHeading ? "" : "invisible"
-                          } ${
-                            skips
-                              ? "border-[color:color-mix(in_srgb,var(--warning)_55%,transparent)] bg-[color:color-mix(in_srgb,var(--warning)_12%,transparent)] text-[color:var(--warning)]"
-                              : "border-border-strong bg-accent-subtle text-accent-text hover:border-accent"
-                          }`}
-                        >
-                          <optgroup label="Auto (follows levels above)">
-                            <option value={0}>H{auto}</option>
-                          </optgroup>
-                          <optgroup label="Pin to">
-                            {Array.from({ length: 9 }, (_, n) => (
-                              <option key={n + 1} value={n + 1}>
-                                H{n + 1}
-                              </option>
-                            ))}
-                          </optgroup>
-                        </select>
-                      </div>
-                      {/* Look — the SAME shared LookControl the Section Title uses
-                          (swatch + Aa▾ popover: Font/Size/B/I/U). This restyles the
-                          WHOLE line (label AND value), unlike the Rows list's
-                          Aa/B/I/U, which touch only the label before the colon. */}
-                      <div className="flex w-24 shrink-0 justify-center">
-                        <LookControl
-                          value={lv}
-                          onChange={(patch) => appearance.onLevelChange(idx, patch)}
-                          open={openPop === `lvl-${i}`}
-                          onOpenChange={(o) => setOpenPop(o ? `lvl-${i}` : null)}
-                          label={label}
-                          bodyFontOption={appearance.bodyFont}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  }),
+                )}
               </div>
             </div>
           </div>

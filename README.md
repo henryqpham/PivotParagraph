@@ -53,13 +53,14 @@ The **Markers** mode (Off / Custom / Multilevel + a **Start** number) plus **New
 
 | Column | Scope | What it does |
 | ------ | ----- | ------------ |
-| **Marker** | this section | Type (`1` `a` `A` `i` `I` `•` `–` None) × delimiter (`.` `)` None) |
-| **Line break before** | this section | A break after this level's own line, before its nested rows (`1. Index` → break → `a. Group`) |
-| **Line break after** | this section | A break after each of this level's whole groups (`…8.2 x` → break → `9 Region`) |
+| **Marker** | this section | Type (`1` `a` `A` `i` `I` `•` `–` None) × a free-text separator (`.` `)` `:` `;` `--` … ≤20 chars) |
+| **Label sep** | this section | The text between a field's label and its value on this level — any string (`: ` `; ` ` — ` …) |
+| **Line break before** | this section | A blank line right BEFORE this row's line — on the level's first sub-row it lands above the whole group; on a stacked `2.2` sub-row it's a per-field blank BETWEEN the stacked lines (`1.1 Country` → blank → `Product`) |
+| **Line break after** | this section | A blank line after each of this level's whole groups (`…8.2 x` → break → `9 Region`) |
 | **Heading** | this section | Map the level to a real Word heading + an Auto/H1–H9 rank chip |
 | **Look** | **all sections** | Color swatch + **Aa▾** popover (font / size / **B** / **I** / **U**) |
 
-**Look is shared by depth across every section** — restyling level 2 restyles level 2 everywhere (it's badged accordingly). A level's Look restyles the **whole line**; the Rows card's `B`/`I`/`U` touch only the label. In *Multilevel* mode the Marker cell becomes a **Show number** toggle, and on a heading-mapped level it reads *"Word numbers"* since Word supplies that number itself.
+**Look is shared by depth across every section** — restyling level 2 restyles level 2 everywhere (it's badged accordingly). A level's Look restyles the **whole line**; the Rows card's `B`/`I`/`U` touch only the label. In *Multilevel* mode the Marker cell becomes a **Show number** toggle, and on a heading-mapped level it reads *"Word numbers"* since Word supplies that number itself. Line breaks are positional — always relative to the row's own line — and adjacent blanks collapse to a single one, so the options compose without doubling and a section never starts or ends on a stray blank.
 
 ## Preview & copy
 
@@ -72,7 +73,7 @@ The pinned right pane shows the active section on a **true-to-scale US-Letter pa
 Each pasted table is a row in the left **Sections rail** — **its own standalone Word document**, not a stacked section. Drag to reorder (or grip ⋮ + ↑/↓), **⧉** to duplicate, ✕ to remove; cap 100.
 
 
-Document-wide settings — **Body font** (default **Aptos** 11 — Microsoft 365's standard font — so output reads like a native document; Arial/Calibri stay in the list), **Line spacing**, **Label separator**, **Indent/level**, and **Reset levels** — live in the **⚙ Document** popover. It also holds the **Style preset**: export your formatting (level looks, markers, numbering, headings, blank lines, fonts, and the Rows-card label bold/italic/underline — everything keyed by *level*, never by column) as a `.json`, then import it onto next week's completely different table and every section adopts the house style in one undoable step.
+Document-wide settings — **Line spacing**, **Indent/level**, and **Reset levels** — live in the **⚙ Document** popover. (There is deliberately no document-wide font or separator control: the base font is **Aptos 11** — Microsoft 365's standard — with per-level pins in each Look popover, and label separators are set per level in the Body Text Definition matrix.) It also holds the **Style preset**: export your formatting (level looks, markers, numbering, headings, blank lines, fonts, and the Rows-card label bold/italic/underline — everything keyed by *level*, never by column) as a `.json`, then import it onto next week's completely different table and every section adopts the house style in one undoable step.
 
 Everything is **undoable** (Ctrl+Z / Ctrl+Y), and the whole workspace **auto-saves to your browser** (local only, nothing uploaded). **Ctrl/Cmd + K** opens a command palette over every action.
 

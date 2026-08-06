@@ -15,7 +15,7 @@
 // owner (PasteInput), mirroring how lib/persistence.ts splits its duties.
 
 import type { LevelInput, TableState } from "@/components/tableModel";
-import { resolveMarkerSpecs } from "@/components/tableModel";
+import { DEFAULT_LEVEL, resolveMarkerSpecs } from "@/components/tableModel";
 import type { TitleInput } from "@/components/TableCard";
 import { DEFAULT_FIELD_LABEL, type FieldLabel } from "@/lib/types";
 import {
@@ -44,6 +44,20 @@ export type StylePresetData = {
   headingRanks: number[];
   breakAfter: boolean[];
   gapAfter: boolean[];
+  /** LEGACY: level-wide label separators from the brief per-level era. Read
+   *  as a fallback; new files write `sepsByLevel`. */
+  labelSeps?: string[];
+  /** Per-(level, stack-slot) label separators (free strings, <=20 chars) —
+   *  the level-keyed projection of the per-FIELD `labelSepByCol`. */
+  sepsByLevel: string[][];
+  /** Per-(level, stack-slot) line-look overrides (null = no override) — the
+   *  level-keyed projection of the per-FIELD `fieldLooks`. */
+  looksByLevel: (LevelInput | null)[][];
+  /** Per-(level, stack-slot) "blank line before this stacked field" flags — the
+   *  level-keyed projection of the per-FIELD `fieldBreakBefore`. Slot 0 is
+   *  always false (the level's own `breakAfter` covers the group's first line).
+   *  Optional so presets saved before this field existed still load. */
+  breaksByLevel?: boolean[][];
   pageBreakBefore: boolean;
   /**
    * The Rows card's per-field LABEL emphasis (show / bold / italic / underline),
@@ -70,14 +84,15 @@ export type StylePresetFile = {
   data: StylePresetData;
 };
 
-/** The globals half of a preset, as PasteInput holds them. */
+/** The globals half of a preset, as PasteInput holds them. (The document-wide
+ *  bodyFont/labelSep controls were removed; `bodyFont` is still WRITTEN to the
+ *  file as the fixed default for transparency, and a legacy `labelSep` in an old
+ *  file is simply ignored — separators are per-level `labelSeps` now.) */
 export type PresetGlobals = {
   levelStyles: LevelInput[];
   titleInput: TitleInput;
   headingStyleName: string;
-  bodyFont: string;
   indentInput: string;
-  labelSep: string;
   lineSpacing: string;
 };
 
@@ -101,9 +116,8 @@ export function buildStylePreset(
       levelStyles: globals.levelStyles,
       titleInput: globals.titleInput,
       headingStyleName: globals.headingStyleName,
-      bodyFont: globals.bodyFont,
+      bodyFont: "Aptos",
       indentInput: globals.indentInput,
-      labelSep: globals.labelSep,
       lineSpacing: globals.lineSpacing,
       markerSpecs: active ? resolveMarkerSpecs(active) : [],
       numbering: active ? active.numbering : DEFAULT_NUMBERING,
@@ -111,6 +125,26 @@ export function buildStylePreset(
       headingRanks: active?.headingRanks ?? [],
       breakAfter: active ? active.breakAfter : [],
       gapAfter: active?.gapAfter ?? [],
+      sepsByLevel: active
+        ? active.pivotLevels.map((bucket, i) =>
+            bucket.map(
+              (col) =>
+                active.labelSepByCol?.[col] ?? active.labelSeps?.[i] ?? ": ",
+            ),
+          )
+        : [],
+      looksByLevel: active
+        ? active.pivotLevels.map((bucket) =>
+            bucket.map((col) => active.fieldLooks?.[col] ?? null),
+          )
+        : [],
+      breaksByLevel: active
+        ? active.pivotLevels.map((bucket) =>
+            bucket.map(
+              (col, j) => j > 0 && active.fieldBreakBefore?.[col] === true,
+            ),
+          )
+        : [],
       pageBreakBefore: active?.pageBreakBefore ?? false,
       // Project the column-keyed label emphasis onto the arrangement's levels
       // (position [level][stack-slot]) so it survives a change of table shape.
@@ -149,6 +183,46 @@ export function applyLabelsByLevel(
     });
   });
   return next;
+}
+
+/**
+ * Re-key a preset's per-(level, slot) separators + look overrides back onto ONE
+ * table's column-keyed records (`labelSepByCol` / `fieldLooks`): the field at
+ * level i, slot j takes entry [i][j] (a slot past the source's stack depth
+ * reuses the last entry). Fields beyond the preset's depth, and unplaced
+ * columns, keep their current values. Pure; returns fresh records.
+ */
+export function applyFieldSettingsByLevel(
+  table: TableState,
+  sepsByLevel: string[][],
+  looksByLevel: (LevelInput | null)[][],
+  breaksByLevel?: boolean[][],
+): {
+  labelSepByCol: Record<number, string>;
+  fieldLooks: Record<number, LevelInput>;
+  fieldBreakBefore: Record<number, boolean>;
+} {
+  const seps: Record<number, string> = { ...(table.labelSepByCol ?? {}) };
+  const looks: Record<number, LevelInput> = { ...(table.fieldLooks ?? {}) };
+  const breaks: Record<number, boolean> = {
+    ...(table.fieldBreakBefore ?? {}),
+  };
+  table.pivotLevels.forEach((bucket, i) => {
+    const rowSeps = sepsByLevel[i];
+    const rowLooks = looksByLevel[i];
+    const rowBreaks = breaksByLevel?.[i];
+    bucket.forEach((col, j) => {
+      if (rowSeps && rowSeps.length > 0)
+        seps[col] = rowSeps[Math.min(j, rowSeps.length - 1)];
+      const lk = rowLooks?.[Math.min(j, (rowLooks?.length ?? 1) - 1)];
+      if (lk) looks[col] = { ...DEFAULT_LEVEL, ...lk };
+      // Slot 0 never carries a stacked-field break (the level's own
+      // Line-break-before owns that position), so only slots >0 replay.
+      if (rowBreaks && rowBreaks.length > 0 && j > 0)
+        breaks[col] = rowBreaks[Math.min(j, rowBreaks.length - 1)] === true;
+    });
+  });
+  return { labelSepByCol: seps, fieldLooks: looks, fieldBreakBefore: breaks };
 }
 
 const NUMBERING_MODES = new Set(["off", "custom", "multilevel"]);
@@ -215,6 +289,28 @@ export function parseStylePreset(parsed: unknown): StylePresetData | null {
     headingRanks: arr<number>((d as StylePresetData).headingRanks),
     breakAfter: arr<boolean>((d as StylePresetData).breakAfter),
     gapAfter: arr<boolean>((d as StylePresetData).gapAfter),
+    sepsByLevel:
+      Array.isArray((d as StylePresetData).sepsByLevel) &&
+      (d as StylePresetData).sepsByLevel.length > 0
+        ? arr<unknown>((d as StylePresetData).sepsByLevel).map((lvl) =>
+            arr<unknown>(lvl).map((v) =>
+              typeof v === "string" ? v.slice(0, 20) : ": ",
+            ),
+          )
+        : // Legacy level-wide separators expand to one-slot rows.
+          arr<unknown>((d as StylePresetData).labelSeps).map((v) => [
+            typeof v === "string" ? v.slice(0, 20) : ": ",
+          ]),
+    looksByLevel: arr<unknown>((d as StylePresetData).looksByLevel).map((lvl) =>
+      arr<unknown>(lvl).map((v) =>
+        v && typeof v === "object"
+          ? { ...DEFAULT_LEVEL, ...(v as Partial<LevelInput>) }
+          : null,
+      ),
+    ),
+    breaksByLevel: arr<unknown>((d as StylePresetData).breaksByLevel).map(
+      (lvl) => arr<unknown>(lvl).map((v) => v === true),
+    ),
     pageBreakBefore: (d as StylePresetData).pageBreakBefore === true,
     // Lenient, shape-checked read: each entry must be an array of objects; each
     // label is normalized over the default so partial/hand-edited entries load.

@@ -20,9 +20,8 @@ function escapeHtml(s: string): string {
  * wrapped in `<b>`/`<i>`/`<u>` per its `FieldLabel`. Underline wraps ONLY the name
  * (so the separator isn't underlined); bold/italic wrap the whole "name<sep>"
  * label. The tags are inline runs (they survive a Word "Use Destination Styles"
- * paste). `sep` is the document-wide label separator (default ": "; chosen from
- * an allow-listed select, and escaped here anyway so a future free-text value
- * can't inject markup).
+ * paste). `sep` is the level's label separator — a FREE string typed by the
+ * user (": " "; " " — " …), so it is escaped here before it touches markup.
  */
 function wrapLabel(name: string, lf: FieldLabel, sep: string): string {
   const namePart = lf.underline
@@ -66,7 +65,7 @@ function toRoman(n: number): string {
  * LEGACY fused marker style (type + delimiter in one token). Kept only so old
  * sessions/exports that stored `markers: MarkerKind[]` can migrate to the split
  * {type, delim} model (`migrateMarkerKind` in tableModel). New code uses
- * `MarkerType` + `MarkerDelim`.
+ * `MarkerType` + a free-string delimiter.
  */
 export type MarkerKind =
   | "decimal" // 1.
@@ -90,16 +89,12 @@ export type MarkerType =
   | "dash" // –
   | "none"; // (no marker)
 
-/** The delimiter glued AFTER a numeric/alpha counter (ignored for symbols). A
- *  marker is always followed by a space before the text, so there is no "space"
- *  delimiter — "none" already yields "1 Apple". */
-export type MarkerDelim =
-  | "dot" // .
-  | "paren" // )
-  | "none"; // (nothing — just the marker-to-text space)
-
-/** A fully-specified marker = counter type + trailing delimiter. */
-export type MarkerSpec = { type: MarkerType; delim: MarkerDelim };
+/** A fully-specified marker = counter type + trailing delimiter. The delimiter
+ *  is a FREE string (":" ";" ")" "--" …, ≤20 chars, escaped at compose time so
+ *  it can never inject markup); legacy stored tokens "dot"/"paren"/"none" are
+ *  migrated to their literals by `resolveMarkerSpecs`. Ignored for symbol/none
+ *  types, which take no delimiter. */
+export type MarkerSpec = { type: MarkerType; delim: string };
 
 /** The counter/symbol GLYPH for a 0-based sibling `index` (no delimiter). */
 function markerGlyph(type: MarkerType, index: number): string {
@@ -123,18 +118,6 @@ function markerGlyph(type: MarkerType, index: number): string {
   }
 }
 
-/** The literal text of a delimiter. */
-function delimText(delim: MarkerDelim): string {
-  switch (delim) {
-    case "dot":
-      return ".";
-    case "paren":
-      return ")";
-    case "none":
-      return "";
-  }
-}
-
 /** Whether a type is a COUNTER (numbers/letters) that can take a delimiter, as
  *  opposed to a standalone symbol (bullet/dash) or none. */
 export function isCounterType(type: MarkerType): boolean {
@@ -147,11 +130,14 @@ export function isCounterType(type: MarkerType): boolean {
   );
 }
 
-/** Compose a marker for a 0-based sibling `index`: the glyph, plus the delimiter
- *  when the type is a counter (a symbol/none takes no delimiter). */
+/** Compose a marker for a 0-based sibling `index`: the glyph, plus the (free-
+ *  string, so ESCAPED here) delimiter when the type is a counter — a symbol/none
+ *  takes no delimiter. Glyphs are machine constants; only the delim is user text. */
 function composeMarker(spec: MarkerSpec, index: number): string {
   const glyph = markerGlyph(spec.type, index);
-  return isCounterType(spec.type) ? `${glyph}${delimText(spec.delim)}` : glyph;
+  return isCounterType(spec.type)
+    ? `${glyph}${escapeHtml(spec.delim.slice(0, 20))}`
+    : glyph;
 }
 
 /** Default marker TYPE for a nesting depth: 1 -> a -> i -> cycle (delimiter
@@ -160,9 +146,9 @@ function defaultMarkerType(depth: number): MarkerType {
   return (["decimal", "lowerAlpha", "lowerRoman"] as const)[(depth - 1) % 3];
 }
 
-/** The default marker spec for a depth (type cycle + dot delimiter). */
+/** The default marker spec for a depth (type cycle + "." delimiter). */
 export function defaultMarkerSpec(depth: number): MarkerSpec {
-  return { type: defaultMarkerType(depth), delim: "dot" };
+  return { type: defaultMarkerType(depth), delim: "." };
 }
 
 /**
@@ -272,6 +258,37 @@ function multilevelNumbers(
 }
 
 /**
+ * A per-FIELD line-look override (this section only): when present for a
+ * [level][slot] position, the field's WHOLE line (number/label/value) is wrapped
+ * in an inline styled run, overriding the level's shared look for just that
+ * line. Inline runs survive both Word paste modes. Values are sanitized here —
+ * they come from controlled inputs, but the renderer trusts nothing.
+ */
+export type FieldLook = {
+  font: string; // "" = inherit the level font (no font-family emitted)
+  sizePt: number;
+  color: string; // #rrggbb
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+};
+
+/** Wrap one line's content in its FieldLook run (span + b/i/u), sanitized. */
+function wrapFieldLook(content: string, lk: FieldLook): string {
+  const font = lk.font.replace(/[^A-Za-z0-9 _-]/g, "").trim();
+  const size = Math.min(72, Math.max(1, Math.floor(lk.sizePt) || 11));
+  const color = /^#[0-9a-fA-F]{6}$/.test(lk.color) ? lk.color : "#000000";
+  const style =
+    (font ? `font-family:'${font}';` : "") +
+    `font-size:${size}pt;color:${color}`;
+  let h = `<span style="${style}">${content}</span>`;
+  if (lk.underline) h = `<u>${h}</u>`;
+  if (lk.italic) h = `<i>${h}</i>`;
+  if (lk.bold) h = `<b>${h}</b>`;
+  return h;
+}
+
+/**
  * Render a pivot (nested-rows) tree as one HTML document fragment.
  *
  * The optional `title` is emitted as a distinct `<p class="ws-title">` so
@@ -355,8 +372,10 @@ export function renderPivotTree(
   titleLevel = 0,
   pageBreakBefore = false,
   headingRanks: number[] = [],
-  labelSep = ": ",
+  labelSeps: string[][] = [],
   gapAfter: boolean[] = [],
+  fieldLooks: (FieldLook | undefined)[][] = [],
+  breakBeforeSlots: boolean[][] = [],
 ): string {
   const numbered = numbering.mode === "multilevel";
   // Precompute each numbered node's display number (transparent hidden levels, top
@@ -403,14 +422,40 @@ export function renderPivotTree(
       // neither.
       const m = numbering.mode === "custom" ? composeMarker(spec, i) : "";
       const num = numberOf?.get(node) ?? "";
+      // LINE BREAK BEFORE (`breakAfter[depth-1]` — the field name is historical):
+      // a spacer immediately BEFORE this node's line(s). Uniform positional
+      // semantics — every level's "before" means "blank above my line"; a lead
+      // spacer at the very start of the document is trimmed by the post-pass.
+      if (breakAfter[depth - 1])
+        blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
+      // Hanging alignment for stacked nodes: when line 0 carries a LEAD (number
+      // or marker) and the node stacks more lines, line 0 hangs its lead into
+      // the margin (data-hang) and the continuation lines indent to match
+      // (data-cont) — so "Product" lines up with "Country", not with "1.1".
+      const lead0 =
+        !isHeading && (num || (!numbered && m)) ? true : false;
+      const hangs = lead0 && node.lines.length > 1;
       node.lines.forEach((line, j) => {
+        // BREAK BETWEEN STACKED FIELDS: a per-field flag puts a blank line
+        // before THIS stacked line, inside the group ("1.1 Country / blank /
+        // Product"). Slot 0 is covered by the level's own "before" above.
+        if (j > 0 && breakBeforeSlots[depth - 1]?.[j] && !isHeading)
+          blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
         const lf = fieldLabels[line.col] ?? DEFAULT_FIELD_LABEL;
         const showLabel = lf.show && line.name !== "";
-        const label = showLabel ? wrapLabel(line.name, lf, labelSep) : "";
+        // Per-(level, stack-slot) label separator (free string, ≤20 chars,
+        // escaped inside wrapLabel); absent → the classic ": ".
+        const label = showLabel
+          ? wrapLabel(
+              line.name,
+              lf,
+              (labelSeps[depth - 1]?.[j] ?? ": ").slice(0, 20),
+            )
+          : "";
         const value = escapeHtml(line.value);
         // First line only: the level's number (when shown) else its marker (only
-        // when numbering is off). A heading row shows neither (Word numbers it); a
-        // numbered-but-hidden level renders plain.
+        // when numbering is off). A heading row shows neither (Word numbers it);
+        // a numbered-but-hidden level renders plain.
         const lead =
           j === 0 && !isHeading
             ? num
@@ -434,27 +479,28 @@ export function renderPivotTree(
           j === 0 && pageBreakBefore && depth === 1 && i > 0
             ? ` data-break="1"`
             : "";
+        const alignAttr = hangs
+          ? j === 0
+            ? ` data-hang="1"`
+            : ` data-cont="1"`
+          : "";
+        // Per-FIELD line-look override: the whole line (lead included, so the
+        // number matches its line) wraps in an inline styled run.
+        const lk = fieldLooks[depth - 1]?.[j];
+        const body = `${prefix}${label}${value}`;
         blocks.push(
-          `<p class="ws-lvl" data-level="${lvl}"${breakAttr}${headingAttr}>${prefix}${label}${value}</p>`,
+          `<p class="ws-lvl" data-level="${lvl}"${breakAttr}${headingAttr}${alignAttr}>${
+            lk && !isHeading ? wrapFieldLook(body, lk) : body
+          }</p>`,
         );
       });
-      // Spacer AFTER this level's own line(s) — a breathing line BETWEEN the
-      // ticked level and whatever follows it (its nested children, or the next
-      // group: "1. Index / blank / a. Group", or "a. Group / blank / 2. Index").
-      // Emitted UNCONDITIONALLY — deciding "does anything follow?" here would
-      // need the DOCUMENT tail, not this sibling list (a sole child is always
-      // its list's last sibling, which would wrongly suppress every blank on a
-      // one-child-per-group level); trailing strays are trimmed after the walk.
-      // Outside the lines loop, so it never perturbs the marker/number counters.
-      if (breakAfter[depth - 1])
-        blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
       if (node.children.length > 0) walk(node.children, level + 1, depth + 1);
-      // GAP AFTER (`gapAfter[depth-1]`): the between-groups counterpart — a
-      // spacer after this node's WHOLE subtree, separating one group from the
-      // next ("…8.2 x / blank / 9 Region"). Between siblings only (skip the
-      // last), so a nested gap never doubles up against the parent's own gap;
-      // the doc-end trim below catches any stray regardless.
-      if (gapAfter[depth - 1] && i < list.length - 1)
+      // LINE BREAK AFTER (`gapAfter[depth-1]`): a spacer after this node's
+      // WHOLE subtree ("…8.2 x / blank / 9 Region"). Emitted unconditionally —
+      // the old skip-the-last-sibling guard silently no-opped on one-group-per-
+      // parent levels (a sole child is always "last"); the post-pass instead
+      // collapses doubled spacers and trims the document's edges.
+      if (gapAfter[depth - 1])
         blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
     });
   };
@@ -466,16 +512,20 @@ export function renderPivotTree(
   } else {
     walk(nodes, 1, 1);
   }
-  // A section never ENDS on blank lines: drop any spacers dangling at the very
-  // end of the document (the last row of a ticked level has nothing to breathe
-  // before). Matched exactly on the spacer shape emitted above, so a real data
-  // row containing "&#160;" (escaped on input) can never be trimmed.
-  while (
-    blocks.length > 0 &&
-    /^<p class="ws-lvl" data-level="[1-9]">&#160;<\/p>$/.test(
-      blocks[blocks.length - 1],
-    )
-  )
-    blocks.pop();
-  return blocks.join("\n");
+  // Spacer post-pass. Matched exactly on the spacer shape emitted above, so a
+  // real data row containing "&#160;" (escaped on input) can never be touched.
+  // 1) COLLAPSE runs of consecutive spacers into one — overlapping choices
+  //    (this group's "after" meeting the next group's "before") read as one
+  //    blank line, never a growing stack. 2) TRIM the document's edges: no
+  //    leading blank (a "before" on the very first block) and no trailing one.
+  const isSpacer = (b: string) =>
+    /^<p class="ws-lvl" data-level="[1-9]">&#160;<\/p>$/.test(b);
+  const out: string[] = [];
+  for (const b of blocks) {
+    if (isSpacer(b) && (out.length === 0 || isSpacer(out[out.length - 1])))
+      continue;
+    out.push(b);
+  }
+  while (out.length > 0 && isSpacer(out[out.length - 1])) out.pop();
+  return out.join("\n");
 }

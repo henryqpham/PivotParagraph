@@ -428,13 +428,15 @@ export function renderPivotTree(
       // spacer at the very start of the document is trimmed by the post-pass.
       if (breakAfter[depth - 1])
         blocks.push(`<p class="ws-lvl" data-level="${lvl}">&#160;</p>`);
-      // Hanging alignment for stacked nodes: when line 0 carries a LEAD (number
-      // or marker) and the node stacks more lines, line 0 hangs its lead into
-      // the margin (data-hang) and the continuation lines indent to match
-      // (data-cont) — so "Product" lines up with "Country", not with "1.1".
+      // Hanging alignment: whenever line 0 carries a LEAD (number or marker)
+      // it hangs that lead into the margin (data-hang) — so wrapped text and
+      // any stacked continuation lines (data-cont) align with the first
+      // field's TEXT, not with "1.1". The lead is tagged (`ws-lead`) so the
+      // preview and the clipboard can MEASURE its real rendered width; the
+      // measured widths also drive the outline indentation (each level nests
+      // under its parent's text — see buildWordHtml / RenderedPreview).
       const lead0 =
         !isHeading && (num || (!numbered && m)) ? true : false;
-      const hangs = lead0 && node.lines.length > 1;
       node.lines.forEach((line, j) => {
         // BREAK BETWEEN STACKED FIELDS: a per-field flag puts a blank line
         // before THIS stacked line, inside the group ("1.1 Country / blank /
@@ -468,14 +470,8 @@ export function renderPivotTree(
         // category also bolds its number (one `<b>` run, survives a Word paste).
         const prefix =
           lead && showLabel && lf.bold ? `<b>${lead}</b>` : lead;
-        // On a hanging node the lead is tagged (`ws-lead`) so the preview and
-        // the clipboard can MEASURE its real rendered width — the hanging
-        // indent equals that width, aligning continuation fields with the
-        // first field's TEXT even when the lead is wide ("1.1.1.1 ").
         const taggedPrefix =
-          hangs && j === 0 && prefix
-            ? `<span class="ws-lead">${prefix}</span>`
-            : prefix;
+          j === 0 && prefix ? `<span class="ws-lead">${prefix}</span>` : prefix;
         // A heading row's FIRST line carries data-heading so buildWordHtml maps it
         // to the destination "Heading K" style.
         const headingAttr =
@@ -487,7 +483,7 @@ export function renderPivotTree(
           j === 0 && pageBreakBefore && depth === 1 && i > 0
             ? ` data-break="1"`
             : "";
-        const alignAttr = hangs
+        const alignAttr = lead0
           ? j === 0
             ? ` data-hang="1"`
             : ` data-cont="1"`

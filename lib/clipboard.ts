@@ -44,7 +44,7 @@ export type TitleStyle = {
  * The single styling source, shared across all tables.
  * - `levels` -- per-depth direct look (index 0 = level 1). Styles the plain body
  *   rows inline, and is the look a heading-marked level's style rule declares.
- * - `indentStep` -- left-indent added per nesting level (inches).
+ * - `indentStep` -- LEGACY; ignored (indentation is derived per line).
  * - `headingStyleName` -- optional Word style name for the TITLE ("" = None). A
  *   built-in "Heading 1-6" (all the dropdown offers) is emitted as a real `<hN>`
  *   element so the paste maps it to the destination document's heading style
@@ -56,7 +56,10 @@ export type TitleStyle = {
  */
 export type HeadingStyle = {
   levels: LevelStyle[];
-  indentStep: number; // inches of left-indent per nesting level
+  /** LEGACY -- ignored. Indentation is DERIVED per line from the outline
+   *  geometry (each level nests under its parent's text; see buildWordHtml);
+   *  kept optional so old snapshots/presets still type-check. */
+  indentStep?: number;
   headingStyleName: string; // Word style for the title ("" = direct look)
   titleStyle?: TitleStyle; // the title's own direct look (when not mapped)
   /** Body line spacing as a multiplier (1 / 1.15 / 1.5; default 1.15). Emitted
@@ -210,7 +213,6 @@ export function buildWordHtml(
   bodyFont: string,
 ): string {
   const lvl = (i: number) => heading.levels[i] ?? FALLBACK_LEVEL;
-  const step = heading.indentStep ?? 0.2;
   const headingName = sanitizeStyleName(heading.headingStyleName ?? "");
   const titleLevel = headingLevel(headingName); // outline level for the title
   // Body line spacing (percent). Clamped to a sane band; 115 = the old fixed value.
@@ -224,24 +226,31 @@ export function buildWordHtml(
   // for render-level `n` (1-based). Inline (not a CSS class) so it survives a
   // "Use Destination Styles" paste. Compact spacing = no space before/after +
   // a 1.15 line, so paragraphs sit tight like the preview.
-  const directStyle = (i: number, n: number) => {
+  const directStyle = (i: number) => {
     const s = lvl(i);
-    const indent = ((n - 1) * step).toFixed(2);
+    // margin-left is a placeholder — the outline walk below replaces it with
+    // this line's derived indent.
     return (
-      `margin-top:0in;margin-bottom:0in;margin-left:${indent}in;line-height:${spacingPct}%;` +
+      `margin-top:0in;margin-bottom:0in;margin-left:0in;line-height:${spacingPct}%;` +
       `color:${s.color};font-family:'${s.font}';font-size:${s.size}pt`
     );
   };
-  // Hanging-indent geometry for stacked nodes (see the body-row rewrite): the
-  // node's lines shift right by the MEASURED width of line 0's lead and line 0's
-  // negative text-indent pulls the lead back into the margin — a fixed hang
-  // misaligned deep levels, where "1.1.1.1 " is far wider than "1.1 ". The
-  // width is measured per hang row (measureLeadIn) and carried to the row's
-  // data-cont continuation lines below; HANG_IN is only the no-lead fallback.
-  const HANG_IN = 0.25;
-  let hangW = HANG_IN;
-  const hangMargin = (n: number, w: number) =>
-    `margin-left:${((n - 1) * step + w).toFixed(3)}in`;
+  // Outline geometry ("legal numbering", the way Word's own multilevel lists
+  // nest): each level's line indents to its PARENT'S TEXT POSITION — the
+  // parent's indent plus the MEASURED width of the parent's lead — so "1.1.1"
+  // starts exactly under "Name", however wide the numbers grow. A line with a
+  // lead hangs it (margin = indent + lead width, first-line indent = -width),
+  // so wrapped text and stacked continuation lines land flush with the text.
+  // textPosIn[d-1] = inches where the most recent depth-d line's text begins;
+  // document order guarantees a parent is processed before its children, so
+  // reading [d-2] always sees the current branch. STEP_IN is the advance for a
+  // lead-less line (numbering off / hidden number / heading) — Word's 0.25in
+  // list convention. The fixed ⚙ "Indent/level" control was REMOVED for this.
+  const STEP_IN = 0.25;
+  const textPosIn: number[] = [];
+  const indentFor = (d: number) =>
+    d <= 1 ? 0 : (textPosIn[d - 2] ?? (d - 1) * STEP_IN);
+  let hangW = STEP_IN; // carries a hang row's lead width to its cont rows
   // The per-level look's bold/italic/underline as nested <b>/<i>/<u> runs (direct
   // character formatting, which a "Use Destination Styles" paste keeps -- unlike a
   // class-level font-weight it would discard). Underline innermost then italic then
@@ -361,6 +370,10 @@ export function buildWordHtml(
         const pageBreak = brk ? "page-break-before:always" : "";
         const i = Number(d) - 1;
         if (h) {
+          // A heading renders flush-left (Word owns its indent on paste) but
+          // still occupies its slot in the outline chain: children indent one
+          // step past where its body line would have sat.
+          textPosIn[Number(d) - 1] = indentFor(Number(d)) + STEP_IN;
           const k = Number(h);
           const s = lvl(i);
           // Heading rows always declare bold (the preview shows them bold).
@@ -375,12 +388,12 @@ export function buildWordHtml(
           if (!classHeadings.has(k)) classHeadings.set(k, look);
           return `<p class="MsoHeading${k}"${style}>${content}</p>`;
         }
-        let base = directStyle(i, Number(d));
-        // Stacked-node hanging alignment: the whole node indents by the lead's
-        // MEASURED width and the FIRST line pulls the lead back into the margin
-        // (negative first-line indent — Word's classic hanging indent), so
-        // continuation fields align with the first field's TEXT, not its
-        // number. All inline direct formatting → survives any paste mode.
+        const indent = indentFor(Number(d));
+        let base = directStyle(i);
+        // Outline indentation + hanging alignment, all inline direct
+        // formatting (survives any paste mode): a lead line hangs its measured
+        // lead; a plain line sits at the derived indent and advances the chain
+        // by STEP_IN; a spacer keeps the indent but leaves the chain alone.
         let body = content;
         if (align === ' data-hang="1"') {
           // The tagged lead (`ws-lead`, stripped from the output) is measured
@@ -407,11 +420,26 @@ export function buildWordHtml(
             /<span class="ws-lead"><b>/.test(content);
           hangW = leadText
             ? Math.min(2, Math.max(0.05, measureLeadIn(leadText, family, sizePt, bold)))
-            : HANG_IN;
-          base = `${base.replace(/margin-left:[^;]+/, hangMargin(Number(d), hangW))};text-indent:-${hangW.toFixed(3)}in`;
+            : STEP_IN;
+          textPosIn[Number(d) - 1] = indent + hangW;
+          base = `${base.replace(/margin-left:[^;]+/, `margin-left:${(indent + hangW).toFixed(3)}in`)};text-indent:-${hangW.toFixed(3)}in`;
           body = content.replace(/<span class="ws-lead">([\s\S]*?)<\/span>/, "$1");
         } else if (align === ' data-cont="1"')
-          base = base.replace(/margin-left:[^;]+/, hangMargin(Number(d), hangW));
+          base = base.replace(
+            /margin-left:[^;]+/,
+            `margin-left:${(indent + hangW).toFixed(3)}in`,
+          );
+        else {
+          base = base.replace(
+            /margin-left:[^;]+/,
+            `margin-left:${indent.toFixed(3)}in`,
+          );
+          // Spacer paragraphs (bare &#160;) keep the indent but must not
+          // advance the chain — a gap between stacked lines would otherwise
+          // clobber the group's text position before its children render.
+          if (content !== "&#160;")
+            textPosIn[Number(d) - 1] = indent + STEP_IN;
+        }
         const style = pageBreak ? `${base};${pageBreak}` : base;
         return `<p style="${style}">${wrapLook(i, body)}</p>`;
       },

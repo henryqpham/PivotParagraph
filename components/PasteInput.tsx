@@ -64,7 +64,10 @@ type SessionSnapshot = {
   levelStyles: LevelInput[];
   /** LEGACY (ignored on read): the removed document-wide body font. */
   bodyFont?: string;
-  indentInput: string;
+  /** LEGACY (ignored on read): the removed ⚙ Indent/level control —
+   *  indentation is now DERIVED from the outline geometry (each level nests
+   *  under its parent's text; see buildWordHtml / RenderedPreview). */
+  indentInput?: string;
   headingStyleName: string;
   titleInput: TitleInput;
   activeId: string | null;
@@ -97,7 +100,6 @@ function historyChanged(a: SessionSnapshot, b: SessionSnapshot): boolean {
   return (
     a.tables !== b.tables ||
     a.levelStyles !== b.levelStyles ||
-    a.indentInput !== b.indentInput ||
     a.headingStyleName !== b.headingStyleName ||
     a.titleInput !== b.titleInput ||
     a.lineSpacing !== b.lineSpacing
@@ -196,7 +198,6 @@ export function PasteInput() {
   // Per-level BODY styling, shared across tables (the "level chart"). Sparse.
   const [levelStyles, setLevelStyles] = useState<LevelInput[]>([]);
   // Left-indent per nesting level (inches), clamped [0, 2].
-  const [indentInput, setIndentInput] = useState<string>("0.2");
   // Global Word heading style the TITLE maps to ("" = None). Driven by the
   // Section Title dropdown in TableCard.
   // "" = None: a new workspace applies NO Word-heading mapping until chosen.
@@ -217,7 +218,6 @@ export function PasteInput() {
   const applySnapshot = useCallback((s: SessionSnapshot) => {
     setTables(s.tables);
     setLevelStyles(Array.isArray(s.levelStyles) ? s.levelStyles : []);
-    setIndentInput(s.indentInput ?? "0.2");
     setHeadingStyleName(s.headingStyleName ?? "");
     setTitleInput(s.titleInput ?? DEFAULT_TITLE);
     setLineSpacing(s.lineSpacing ?? DEFAULT_LINE_SPACING);
@@ -264,7 +264,6 @@ export function PasteInput() {
     () => ({
       tables,
       levelStyles,
-      indentInput,
       headingStyleName,
       titleInput,
       activeId,
@@ -274,7 +273,6 @@ export function PasteInput() {
     [
       tables,
       levelStyles,
-      indentInput,
       headingStyleName,
       titleInput,
       activeId,
@@ -426,14 +424,9 @@ export function PasteInput() {
         underline: ls?.underline ?? false,
       };
     });
-    const parsedIndent = parseFloat(indentInput);
-    const indentStep = Number.isFinite(parsedIndent)
-      ? Math.min(2, Math.max(0, parsedIndent))
-      : 0.2;
     const parsedSpacing = parseFloat(lineSpacing);
     return {
       levels,
-      indentStep,
       headingStyleName,
       titleStyle: {
         font: titleInput.font,
@@ -449,7 +442,6 @@ export function PasteInput() {
     };
   }, [
     levelStyles,
-    indentInput,
     headingStyleName,
     titleInput,
     lineSpacing,
@@ -476,10 +468,6 @@ export function PasteInput() {
   function changeLineSpacing(v: string) {
     noteEdit();
     if (LINE_SPACINGS.some((s) => s.value === v)) setLineSpacing(v);
-  }
-  function changeIndentInput(v: string) {
-    noteEdit();
-    setIndentInput(v);
   }
   function resetLevels() {
     noteEdit();
@@ -725,7 +713,6 @@ export function PasteInput() {
         levelStyles,
         titleInput,
         headingStyleName,
-        indentInput,
         lineSpacing,
       },
       activeTable,
@@ -762,7 +749,6 @@ export function PasteInput() {
         setLevelStyles(Array.isArray(data.levelStyles) ? data.levelStyles : []);
         setTitleInput(data.titleInput);
         setHeadingStyleName(data.headingStyleName);
-        setIndentInput(data.indentInput);
         if (LINE_SPACINGS.some((s) => s.value === data.lineSpacing))
           setLineSpacing(data.lineSpacing as string);
         // Level-keyed settings onto EVERY section. structuredClone per table so
@@ -1211,19 +1197,10 @@ export function PasteInput() {
                       ))}
                     </select>
                   </label>
-                  <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
-                    Indent per level (inches)
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={indentInput}
-                      onChange={(e) =>
-                        changeIndentInput(e.target.value.replace(/[^0-9.]/g, ""))
-                      }
-                      aria-label="Indent per nesting level, in inches"
-                      className={`${FIELD} w-16`}
-                    />
-                  </label>
+                  {/* No Indent-per-level control: indentation is DERIVED
+                      from the outline geometry — each level's line nests under
+                      its parent's text, sized by the measured number/marker
+                      widths (0.25in steps when a level has no lead). */}
                   <button
                     type="button"
                     onClick={resetLevels}

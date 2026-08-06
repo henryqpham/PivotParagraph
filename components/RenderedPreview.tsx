@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { headingLevel, type HeadingStyle } from "@/lib/clipboard";
 
 /**
@@ -51,10 +51,11 @@ export function RenderedPreview({
   headingStyle: HeadingStyle;
   bodyFont: string;
 }) {
-  // Measure the paper width + rendered content height to draw page boundaries and
-  // count pages. Kept in a layout effect (+ ResizeObserver) so it re-runs on pane
-  // resize and whenever the content changes. Hooks run unconditionally, before the
-  // empty-state early return below.
+  // Measure the paper width + rendered content height to draw page boundaries
+  // and count pages, and derive the outline indentation. A LAYOUT effect (runs
+  // before paint, so the derived margins never flash their CSS approximation)
+  // plus a ResizeObserver for pane resizes and content changes. Hooks run
+  // unconditionally, before the empty-state early return below.
   const paperRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState<{ pages: number; bandPx: number }>({
@@ -62,43 +63,58 @@ export function RenderedPreview({
     bandPx: 0,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const paper = paperRef.current;
     const content = contentRef.current;
     if (!paper || !content) return;
-    // Refine the hanging alignment to the REAL lead width. The static CSS
-    // rules approximate with 0.25in for first paint; here each hang row's
-    // rendered lead (`<span class="ws-lead">`) is measured and the row plus its
-    // data-cont continuation lines get exact margins — mirroring
-    // buildWordHtml's canvas measurement — so a stacked "RATIONALE" sits flush
-    // under "DESCRIPTION" even when the number ("1.1.1.1 ") is wider than the
-    // default hang. Runs inside measure() (before heights are read, so
-    // pagination sees final geometry) and therefore re-applies on every
-    // ResizeObserver tick and after web-font settling — a late font swap or a
-    // zero-width measurement in a hidden pane self-heals on the next tick.
-    const stepIn = headingStyle.indentStep ?? 0.2;
-    const refineHangs = () => {
-      content.querySelectorAll<HTMLElement>("p[data-hang]").forEach((row) => {
+    // Derive the OUTLINE INDENTATION from the rendered geometry, mirroring
+    // buildWordHtml's canvas walk: each level's line indents to its PARENT'S
+    // TEXT POSITION (parent indent + the parent lead's measured width — the
+    // `<span class="ws-lead">` the renderer tags), so "1.1.1" starts exactly
+    // under "Name" and stacked/wrapped text lands flush with the first
+    // field's text. A lead-less line advances the chain by a fixed 0.25in
+    // step (Word's list convention); spacers keep their indent but leave the
+    // chain alone; heading rows stay flush-left (Word owns their indent) yet
+    // still advance the chain for their children. The static CSS rules are
+    // only a no-JS fallback — this runs pre-paint and re-applies on every
+    // ResizeObserver tick and after web-font settling, so a late font swap or
+    // a zero-width measurement in a hidden pane self-heals on the next tick.
+    const STEP_PX = 24; // 0.25in at CSS 96dpi
+    const refineOutline = () => {
+      const textPos: number[] = [];
+      let hangPos = STEP_PX; // carries a hang row's margin to its cont rows
+      let hidden = false;
+      content.querySelectorAll<HTMLElement>("p[data-level]").forEach((row) => {
+        if (hidden) return;
+        const d = Number(row.dataset.level) || 1;
+        const indent = d <= 1 ? 0 : (textPos[d - 2] ?? (d - 1) * STEP_PX);
+        if (row.hasAttribute("data-heading")) {
+          textPos[d - 1] = indent + STEP_PX;
+          return; // CSS keeps headings flush-left, as Word will
+        }
+        if (row.hasAttribute("data-cont")) {
+          row.style.marginLeft = `${hangPos.toFixed(1)}px`;
+          return;
+        }
         const lead = row.querySelector<HTMLElement>(".ws-lead");
-        if (!lead) return;
-        const px = lead.getBoundingClientRect().width;
-        if (px <= 0) return; // hidden — keep the CSS approximation for now
-        const w = px.toFixed(1);
-        const baseIn = ((Number(row.dataset.level) || 1) - 1) * stepIn;
-        const margin = `calc(${baseIn.toFixed(2)}in + ${w}px)`;
-        row.style.marginLeft = margin;
-        row.style.textIndent = `-${w}px`;
-        for (let el = row.nextElementSibling; el; el = el.nextElementSibling) {
-          if (el.matches("p[data-cont]"))
-            (el as HTMLElement).style.marginLeft = margin;
-          else if (el.matches("p[data-level]") && el.textContent === " ")
-            continue; // a between-stacked spacer — the group continues past it
-          else break;
+        if (lead) {
+          const w = lead.getBoundingClientRect().width;
+          if (w <= 0) {
+            hidden = true; // bail wholly — a partial chain would mislead
+            return;
+          }
+          row.style.marginLeft = `${(indent + w).toFixed(1)}px`;
+          row.style.textIndent = `-${w.toFixed(1)}px`;
+          textPos[d - 1] = hangPos = indent + w;
+        } else {
+          row.style.marginLeft = `${indent.toFixed(1)}px`;
+          if (row.textContent !== "\u00A0")
+            textPos[d - 1] = indent + STEP_PX;
         }
       });
     };
     const measure = () => {
-      refineHangs();
+      refineOutline();
       const width = paper.clientWidth;
       const bandPx = width * PAGE_BAND_FRAC;
       const contentH = content.scrollHeight;
@@ -147,7 +163,9 @@ export function RenderedPreview({
     italic: false,
     underline: false,
   };
-  const step = headingStyle.indentStep ?? 0.2;
+  // First-paint / no-JS approximation only — the layout effect above derives
+  // the real per-line outline indentation before anything is painted.
+  const step = 0.25;
   const rule = (sel: string, i: number, indentIn: string) => {
     const lv = headingStyle.levels[i] ?? FALLBACK;
     const margin = indentIn ? `;margin-left:${indentIn}in` : "";
@@ -204,11 +222,9 @@ export function RenderedPreview({
     Array.from({ length: 9 }, (_, i) =>
       rule(`[data-level="${i + 1}"]`, i, (i * step).toFixed(2)),
     ).join("") +
-    // Stacked-node hanging alignment, FIRST-PAINT approximation only: 0.25in
-    // until the measure effect above reads each row's real `ws-lead` width and
-    // sets exact inline margins (which win over these rules) — so a stacked
-    // "Product" aligns with "Country", not with "1.1". After the base level
-    // rules, so margin wins.
+    // Hanging-alignment approximation for the same no-JS fallback; the
+    // layout effect's inline margins win over these rules. After the base
+    // level rules, so margin wins.
     Array.from({ length: 9 }, (_, i) => {
       const m = (i * step + 0.25).toFixed(2);
       return (

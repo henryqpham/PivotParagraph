@@ -33,7 +33,9 @@ export type StylePresetData = {
   titleInput: TitleInput;
   headingStyleName: string;
   bodyFont: string;
-  indentInput: string;
+  /** LEGACY: the removed ⚙ Indent/level control. Old files may carry it;
+   *  ignored on import — indentation is derived from the outline geometry. */
+  indentInput?: string;
   labelSep?: string;
   lineSpacing?: string;
   // Level-indexed per-table settings — column-independent, so they replay on any
@@ -92,7 +94,6 @@ export type PresetGlobals = {
   levelStyles: LevelInput[];
   titleInput: TitleInput;
   headingStyleName: string;
-  indentInput: string;
   lineSpacing: string;
 };
 
@@ -117,7 +118,6 @@ export function buildStylePreset(
       titleInput: globals.titleInput,
       headingStyleName: globals.headingStyleName,
       bodyFont: "Aptos",
-      indentInput: globals.indentInput,
       lineSpacing: globals.lineSpacing,
       markerSpecs: active ? resolveMarkerSpecs(active) : [],
       numbering: active ? active.numbering : DEFAULT_NUMBERING,
@@ -280,7 +280,6 @@ export function parseStylePreset(parsed: unknown): StylePresetData | null {
     titleInput,
     headingStyleName: str((d as StylePresetData).headingStyleName, ""),
     bodyFont: str((d as StylePresetData).bodyFont, "Aptos"),
-    indentInput: str((d as StylePresetData).indentInput, "0.2"),
     labelSep: (d as StylePresetData).labelSep,
     lineSpacing: (d as StylePresetData).lineSpacing,
     markerSpecs: arr<MarkerSpec>((d as StylePresetData).markerSpecs),

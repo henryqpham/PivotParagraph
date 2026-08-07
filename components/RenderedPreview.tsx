@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import { headingLevel, type HeadingStyle } from "@/lib/clipboard";
 
 /**
@@ -39,7 +39,7 @@ import { headingLevel, type HeadingStyle } from "@/lib/clipboard";
 const MARGIN_FRAC = 1 / 8.5; // 1in side/top/bottom margin as a fraction of width
 const PAGE_BAND_FRAC = 9 / 8.5; // 9in usable band per page, ditto
 
-export function RenderedPreview({
+function RenderedPreviewInner({
   html,
   emptyHint,
   headingStyle,
@@ -80,11 +80,26 @@ export function RenderedPreview({
     // ResizeObserver tick and after web-font settling, so a late font swap or
     // a zero-width measurement in a hidden pane self-heals on the next tick.
     const STEP_PX = 24; // 0.25in at CSS 96dpi
+    // Batched into a READ phase then a WRITE phase: collecting every lead's
+    // width first costs ONE layout pass, whereas reading after each row's
+    // style write forces a reflow per numbered row (layout thrash — this walk
+    // runs pre-paint on EVERY edit, so per-row reflows read as a visible
+    // stutter while typing or toggling looks).
     const refineOutline = () => {
+      const rows = Array.from(
+        content.querySelectorAll<HTMLElement>("p[data-level]"),
+      );
+      // READ: rendered lead widths (null = no lead on this row). The only
+      // layout-forcing reads in the walk.
+      const leadW = rows.map((row) => {
+        const lead = row.querySelector<HTMLElement>(".ws-lead");
+        return lead ? lead.getBoundingClientRect().width : null;
+      });
+      // WRITE: derive the chain and set margins; nothing below reads layout.
       const textPos: number[] = [];
       let hangPos = STEP_PX; // carries a hang row's margin to its cont rows
       let hidden = false;
-      content.querySelectorAll<HTMLElement>("p[data-level]").forEach((row) => {
+      rows.forEach((row, k) => {
         if (hidden) return;
         const d = Number(row.dataset.level) || 1;
         const indent = d <= 1 ? 0 : (textPos[d - 2] ?? (d - 1) * STEP_PX);
@@ -96,9 +111,8 @@ export function RenderedPreview({
           row.style.marginLeft = `${hangPos.toFixed(1)}px`;
           return;
         }
-        const lead = row.querySelector<HTMLElement>(".ws-lead");
-        if (lead) {
-          const w = lead.getBoundingClientRect().width;
+        const w = leadW[k];
+        if (w !== null) {
           if (w <= 0) {
             hidden = true; // bail wholly — a partial chain would mislead
             return;
@@ -127,13 +141,16 @@ export function RenderedPreview({
     };
     let disposed = false;
     measure();
-    // Once web fonts settle, measure again: a lead measured against the
-    // fallback font is a few px off after Aptos swaps in.
-    document.fonts?.ready
-      .then(() => {
-        if (!disposed) measure();
-      })
-      .catch(() => {});
+    // While web fonts are STILL LOADING, measure again once they settle (a
+    // lead measured against the fallback font is a few px off after Aptos
+    // swaps in). Once loaded, fonts.ready resolves immediately — re-measuring
+    // then would just double the walk on every edit for nothing.
+    if (document.fonts && document.fonts.status !== "loaded")
+      document.fonts.ready
+        .then(() => {
+          if (!disposed) measure();
+        })
+        .catch(() => {});
     const ro = new ResizeObserver(measure);
     ro.observe(paper);
     ro.observe(content);
@@ -232,6 +249,11 @@ export function RenderedPreview({
         `.ws-preview [data-level="${i + 1}"][data-hang]{margin-left:${m}in;text-indent:-0.25in}`
       );
     }).join("") +
+    // A field-look line (`data-flook`) is SELF-DEFINED: neutralize the level
+    // look's B/I/U at the paragraph so the field look's own styled span + runs
+    // are all that show — matching buildWordHtml, which skips the level wrap
+    // for these lines. After the [data-level] rules, so it wins.
+    `.ws-preview [data-flook]{font-weight:400;font-style:normal;text-decoration:none}` +
     // Heading-mapped rows are ALWAYS bold + non-italic + non-underline (Word
     // owns their look on a mapping paste; the emitted heading rule declares only
     // bold), so neutralize any per-level italic/underline here to keep the
@@ -317,3 +339,7 @@ export function RenderedPreview({
     </div>
   );
 }
+
+// memo + the parent's stable/deferred props = the preview only re-renders when
+// its html or styles actually change, and then in a deferred (non-urgent) pass.
+export const RenderedPreview = memo(RenderedPreviewInner);

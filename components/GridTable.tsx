@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Grid } from "@/lib/types";
 
 /** Cap the rows we render so a huge paste can't freeze the tab; the note below
@@ -18,7 +19,7 @@ const MAX_ROWS = 500;
  * All cell text is rendered as JSX children (React escapes it), so there is no
  * injection surface even though the values are user-derived.
  */
-export function GridTable({
+function GridTableInner({
   grid,
   headerRow = 0,
 }: {
@@ -106,3 +107,7 @@ export function GridTable({
     </div>
   );
 }
+
+// memo: the raw grid never changes on styling edits, so the (potentially huge)
+// table skips those renders entirely.
+export const GridTable = memo(GridTableInner);

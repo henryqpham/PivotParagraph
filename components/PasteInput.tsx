@@ -2,7 +2,9 @@
 
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -59,6 +61,29 @@ const DEFAULT_TITLE: TitleInput = {
  *  Optional fields stay optional so pre-existing sessions/exports still load
  *  (defaults applied on read); `labelSep`/`bodyFont` are LEGACY leftovers of
  *  removed document-wide controls, ignored on read. */
+/**
+ * A permanently-stable callback identity whose body always sees the latest
+ * render's scope. Inline arrow props re-created every render were defeating
+ * the panes' memo() — every keystroke reconciled the whole builder form, the
+ * rail, AND the preview. The ref updates in a layout effect, which is safe
+ * because every wrapped function is an EVENT handler (invoked after commit),
+ * never called during render.
+ */
+function useEvent<A extends unknown[], R>(
+  fn: (...args: A) => R,
+): (...args: A) => R {
+  const ref = useRef(fn);
+  useLayoutEffect(() => {
+    ref.current = fn;
+  });
+  return useMemo(
+    () =>
+      (...args: A) =>
+        ref.current(...args),
+    [],
+  );
+}
+
 type SessionSnapshot = {
   tables: TableState[];
   levelStyles: LevelInput[];
@@ -291,8 +316,17 @@ export function PasteInput() {
       // An empty workspace REMOVES the saved key entirely rather than persisting an
       // empty shell — so Clear all (or removing the last section) truly wipes the
       // cache instead of leaving a lingering entry behind.
-      if (snapshot.tables.length === 0) clearSession();
-      else saveSession(snapshot);
+      const write = () => {
+        if (snapshot.tables.length === 0) clearSession();
+        else saveSession(snapshot);
+      };
+      // JSON.stringify + localStorage.setItem are synchronous — on a large
+      // workspace that's a visible hitch right after every edit burst, so
+      // write at idle when the browser supports it (the pagehide flush below
+      // stays synchronous, so nothing is lost on close).
+      if (typeof requestIdleCallback === "function")
+        requestIdleCallback(write, { timeout: 2000 });
+      else write();
     }, 400);
     return () => clearTimeout(handle);
   }, [hydrated, snapshot]);
@@ -912,6 +946,35 @@ export function PasteInput() {
     [activeTable, activeHtml],
   );
 
+  // ---- Render-performance plumbing. Two things made EVERY edit stutter:
+  //      (1) inline arrow/object props gave the memo()'d panes fresh
+  //      identities each render, so the entire tree reconciled per keystroke —
+  //      the useEvent wrappers + this appearance memo pin them; (2) the
+  //      preview subtree (innerHTML replace + outline measurement) rendered
+  //      URGENTLY in the same frame as the control being clicked —
+  //      useDeferredValue lets the control's frame paint first and moves the
+  //      preview rebuild into a follow-up, interruptible render. ------------
+  const onActiveTableChange = useEvent((patch: Partial<TableState>) => {
+    if (activeTable) patchTable(activeTable.id, patch);
+  });
+  const onTitleChangeStable = useEvent(setTitle);
+  const onHeadingStyleChangeStable = useEvent(changeHeadingStyleName);
+  const onLevelChangeStable = useEvent(setLevel);
+  const onRemoveStable = useEvent(removeTable);
+  const onReorderStable = useEvent(moveTable);
+  const onDuplicateStable = useEvent(duplicateTable);
+  const onAddStable = useEvent(() => setShowAddModal(true));
+  const appearance = useMemo(
+    () => ({
+      levelStyles,
+      onLevelChange: onLevelChangeStable,
+      bodyFont: BODY_FONT,
+    }),
+    [levelStyles, onLevelChangeStable],
+  );
+  const deferredHtml = useDeferredValue(activeHtml);
+  const deferredHeadingStyle = useDeferredValue(headingStyle);
+
   const errorBanner = error && (
     <p
       role="alert"
@@ -1305,10 +1368,10 @@ export function PasteInput() {
           tables={tables}
           activeId={activeTable?.id ?? null}
           onSelect={setActiveId}
-          onRemove={removeTable}
-          onReorder={moveTable}
-          onDuplicate={duplicateTable}
-          onAdd={() => setShowAddModal(true)}
+          onRemove={onRemoveStable}
+          onReorder={onReorderStable}
+          onDuplicate={onDuplicateStable}
+          onAdd={onAddStable}
         />
 
         {/* CENTER: onboarding (empty) or the two command groups */}
@@ -1347,18 +1410,14 @@ export function PasteInput() {
                 <TableCard
                   key={activeTable.id}
                   table={activeTable}
-                  onChange={(patch) => patchTable(activeTable.id, patch)}
+                  onChange={onActiveTableChange}
                   headingStyleName={headingStyleName}
-                  onHeadingStyleChange={changeHeadingStyleName}
+                  onHeadingStyleChange={onHeadingStyleChangeStable}
                   title={titleInput}
-                  onTitleChange={setTitle}
+                  onTitleChange={onTitleChangeStable}
                   dragRows={dragRows}
                   onDragRowsChange={setDragRows}
-                  appearance={{
-                    levelStyles,
-                    onLevelChange: setLevel,
-                    bodyFont: BODY_FONT,
-                  }}
+                  appearance={appearance}
                 />
               )}
             </>
@@ -1426,8 +1485,8 @@ export function PasteInput() {
               )
             ) : (
               <RenderedPreview
-                html={activeHtml}
-                headingStyle={headingStyle}
+                html={deferredHtml}
+                headingStyle={deferredHeadingStyle}
                 bodyFont={BODY_FONT}
                 emptyHint="Add fields in the center to build the outline. Stack fields at one indent level to show them together (like an Excel pivot's Row Labels)."
               />

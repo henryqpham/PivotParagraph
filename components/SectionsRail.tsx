@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { TableState } from "./tableModel";
 
 /**
@@ -10,7 +10,7 @@ import type { TableState } from "./tableModel";
  * active/edited section), reordered by **drag and drop** (grab a row and drop it
  * where you want; keyboard users grab the ⋮ handle and press ↑/↓), and removed.
  */
-export function SectionsRail({
+function SectionsRailInner({
   tables,
   activeId,
   onSelect,
@@ -243,3 +243,7 @@ export function SectionsRail({
     </aside>
   );
 }
+
+// memo + the parent's stable callbacks = the rail skips renders that don't
+// touch the section list itself.
+export const SectionsRail = memo(SectionsRailInner);

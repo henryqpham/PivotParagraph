@@ -491,9 +491,13 @@ export function renderPivotTree(
         // Per-FIELD line-look override: the whole line (lead included, so the
         // number matches its line) wraps in an inline styled run.
         const lk = fieldLooks[depth - 1]?.[j];
+        // A field-look line is SELF-DEFINED: `data-flook` tells both outputs
+        // to suppress the LEVEL look's bold/italic/underline for this line, so
+        // a per-field Look can also REMOVE emphasis, not just pile on top.
+        const flookAttr = lk && !isHeading ? ` data-flook="1"` : "";
         const body = `${taggedPrefix}${label}${value}`;
         blocks.push(
-          `<p class="ws-lvl" data-level="${lvl}"${breakAttr}${headingAttr}${alignAttr}>${
+          `<p class="ws-lvl" data-level="${lvl}"${breakAttr}${headingAttr}${alignAttr}${flookAttr}>${
             lk && !isHeading ? wrapFieldLook(body, lk) : body
           }</p>`,
         );

@@ -358,13 +358,14 @@ export function buildWordHtml(
     // paragraph (nbsp, data-level only) passes through the else branch as an
     // ordinary inline body paragraph.
     .replace(
-      /<p class="ws-lvl" data-level="([1-9])"( data-break="1")?(?: data-heading="([1-9])")?( data-hang="1"| data-cont="1")?>([\s\S]*?)<\/p>/g,
+      /<p class="ws-lvl" data-level="([1-9])"( data-break="1")?(?: data-heading="([1-9])")?( data-hang="1"| data-cont="1")?( data-flook="1")?>([\s\S]*?)<\/p>/g,
       (
         _m,
         d: string,
         brk: string | undefined,
         h: string | undefined,
         align: string | undefined,
+        flook: string | undefined,
         content: string,
       ) => {
         const pageBreak = brk ? "page-break-before:always" : "";
@@ -441,7 +442,10 @@ export function buildWordHtml(
             textPosIn[Number(d) - 1] = indent + STEP_IN;
         }
         const style = pageBreak ? `${base};${pageBreak}` : base;
-        return `<p style="${style}">${wrapLook(i, body)}</p>`;
+        // A data-flook line already carries its complete look (wrapFieldLook's
+        // styled span + its own b/i/u runs) — the level look's emphasis must
+        // NOT wrap it, or a per-field Look could never turn bold OFF.
+        return `<p style="${style}">${flook ? body : wrapLook(i, body)}</p>`;
       },
     );
 

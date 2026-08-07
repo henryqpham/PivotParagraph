@@ -58,7 +58,7 @@ The **Markers** mode (Off / Custom / Multilevel + a **Start** number) plus **New
 | **Line break before** | this section | A blank line right BEFORE this row's line — on the level's first sub-row it lands above the whole group; on a stacked `2.2` sub-row it's a per-field blank BETWEEN the stacked lines (`1.1 Country` → blank → `Product`) |
 | **Line break after** | this section | A blank line after each of this level's whole groups (`…8.2 x` → break → `9 Region`) |
 | **Heading** | this section | Map the level to a real Word heading + an Auto/H1–H9 rank chip |
-| **Look** | **all sections** | Color swatch + **Aa▾** popover (font / size / **B** / **I** / **U**) |
+| **Look** | level rows: **all sections** · stacked fields: this section | Color swatch + **Aa▾** popover (font / size / **B** / **I** / **U**); on a stacked level every sub-row styles ITS OWN field's line, and that per-field Look fully defines the line (it can un-bold what the level look bolds) |
 
 **Look is shared by depth across every section** — restyling level 2 restyles level 2 everywhere (it's badged accordingly). A level's Look restyles the **whole line**; the Rows card's `B`/`I`/`U` touch only the label. In *Multilevel* mode the Marker cell becomes a **Show number** toggle, and on a heading-mapped level it reads *"Word numbers"* since Word supplies that number itself. Line breaks are positional — always relative to the row's own line — and adjacent blanks collapse to a single one, so the options compose without doubling and a section never starts or ends on a stray blank.
 

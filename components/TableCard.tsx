@@ -1139,9 +1139,9 @@ function TableCardInner({
                 <span className="w-20 shrink-0 text-center">Heading</span>
                 <span
                   className="w-24 shrink-0 text-center text-accent-text"
-                  title="Shared by DEPTH across every section — changing level 2's look restyles level 2 everywhere"
+                  title="A single-field level's Look is shared by DEPTH across every section; each STACKED field's Look styles only that field's line, in this section"
                 >
-                  Look · all tables
+                  Look
                 </span>
               </div>
               <div className="flex flex-col gap-0.5">
@@ -1380,12 +1380,14 @@ function TableCardInner({
                             </>
                           )}
                         </div>
-                        {/* Look — first sub-row edits the LEVEL look (shared by
-                            depth across all tables); a stacked sibling edits its
-                            OWN per-field line look (this section only), so
-                            bucketed fields are individually stylable. */}
+                        {/* Look — scope follows stacking: a SINGLE-field
+                            level's row edits the LEVEL look (shared by depth
+                            across all tables), but EVERY sub-row of a STACKED
+                            level edits that field's OWN line look (this
+                            section) — "3.1's Look" must style 3.1's line, not
+                            the whole level (user-reported confusion). */}
                         <div className="flex w-24 shrink-0 justify-center">
-                          {owner ? (
+                          {bucket.length === 1 ? (
                             <LookControl
                               value={lv}
                               onChange={(patch) =>

@@ -871,15 +871,24 @@ export function PasteInput() {
     setCopyNote(null);
     // Checkpoint any in-flight edit so the clear is its own undo step.
     commitPending();
+    // FULL factory reset — "almost like starting a new tab" (user request):
+    // not just the sections, but every formatting global too. All of these are
+    // in the SessionSnapshot, so one Ctrl+Z restores the whole workspace.
     setTables([]);
     setActiveId(null);
+    setLevelStyles([]);
+    setTitleInput(DEFAULT_TITLE);
+    setHeadingStyleName("");
+    setLineSpacing(DEFAULT_LINE_SPACING);
+    setDragRows(false);
+    setView("rendered");
     setError(null);
     setConfirmClear(false);
     // Remove the localStorage entry right away (the debounced effect would also do
     // this once state settles, but wipe immediately so the cache is gone the moment
     // you clear, not 400ms later).
     clearSession();
-    setStatus("All sections cleared. Undo available (Ctrl+Z).");
+    setStatus("Workspace reset to defaults. Undo available (Ctrl+Z).");
   }
 
   // Flash the transient copy-button state, replacing any prior 2s reset timer so a
@@ -1151,9 +1160,9 @@ export function PasteInput() {
     },
     {
       id: "clear",
-      label: "Clear all sections",
+      label: "Clear all — reset workspace",
       section: "Edit",
-      keywords: "delete reset",
+      keywords: "delete reset defaults factory new fresh",
       disabled: tables.length === 0,
       run: () => setConfirmClear(true),
     },

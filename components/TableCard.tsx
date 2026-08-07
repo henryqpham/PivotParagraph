@@ -296,9 +296,8 @@ function GuideCell({ kind }: { kind: "line" | "tee" | "corner" | "blank" }) {
 /**
  * The GLOBAL per-depth body look (owned by PasteInput), edited inline in the
  * matrix's "Look" column so a level's look sits with the level that defines it.
- * Document-wide settings (body font / indent / reset) now live in PasteInput's
- * top-band "Document" popover, so this contract is just the two the Look column
- * needs (both shared across every section).
+ * Document-wide settings now live in PasteInput's top-band "Document" popover,
+ * so this contract is just what the Look column needs (shared across sections).
  */
 type AppearanceControls = {
   levelStyles: LevelInput[];
